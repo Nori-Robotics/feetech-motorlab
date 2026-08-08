@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+data/captured_positions.json
+data/recordings/*.csv
+!data/recordings/.gitkeep

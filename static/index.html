@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0e11">
+  <script>
+    (() => {
+      try {
+        const savedTheme = localStorage.getItem("nori-motorlab-theme");
+        if (savedTheme === "light" || savedTheme === "dark") {
+          document.documentElement.dataset.theme = savedTheme;
+          document.querySelector('meta[name="theme-color"]').content = savedTheme === "dark" ? "#0b0e11" : "#fbfaf5";
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <title>NORI MotorLab · Feetech Characterization</title>
+  <link rel="stylesheet" href="/styles.css?v=20260807-web-id-station">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <header class="topbar">
+    <a id="brandHome" class="brand" href="#bus" aria-label="Open the bus dashboard">
+      <img class="brand-mark" src="/nori-mark.png" alt="">
+      <span class="brand-name">nori</span>
+      <span class="brand-chip">SERVO LAB</span>
+    </a>
+    <div class="topbar-center">
+      <span class="eyebrow">// SERVO BENCH TOOL</span>
+      <span>FEETECH / CHARACTERIZATION</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="themeButton" class="theme-button" type="button" aria-label="Switch to light mode" aria-pressed="true" title="Switch to light mode">
+        <svg class="theme-icon moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/></svg>
+        <svg class="theme-icon sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></svg>
+        <span id="themeText">DARK</span>
+      </button>
+      <button id="resetConfirmationsButton" class="safety-preferences-button hidden" type="button" aria-label="Restore safety confirmations" title="Restore safety confirmations">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z"/><path d="M9 11a3 3 0 1 1 1 2.24M9 8v3h3"/></svg>
+        <span id="resetConfirmationsText">PROMPTS</span>
+      </button>
+      <button id="recordButton" class="record-button" type="button" disabled>
+        <span class="record-dot"></span><span id="recordText">Record run</span>
+      </button>
+      <div id="connectionBadge" class="connection-badge offline">
+        <span class="status-dot"></span><span id="connectionText">OFFLINE</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar">
+      <section class="connection-panel">
+        <div class="section-heading">
+          <div><span class="section-index">01</span><h2>BUS LINK</h2></div>
+          <button id="refreshPorts" class="icon-button" type="button" title="Refresh serial ports" aria-label="Refresh serial ports">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+          </button>
+        </div>
+        <label class="field-label" for="portSelect">SERIAL ADAPTER</label>
+        <div class="select-wrap">
+          <select id="portSelect"><option value="">No USB adapter detected</option></select>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+        </div>
+        <div class="connection-row">
+          <div>
+            <label class="field-label" for="baudSelect">BAUD RATE</label>
+            <div class="select-wrap compact">
+              <select id="baudSelect">
+                <option value="1000000">1,000,000</option>
+                <option value="500000">500,000</option>
+                <option value="250000">250,000</option>
+                <option value="128000">128,000</option>
+                <option value="115200">115,200</option>
+                <option value="57600">57,600</option>
+                <option value="38400">38,400</option>
+                <option value="19200">19,200</option>
+              </select>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+            </div>
+          </div>
+          <button id="scanButton" class="secondary-button scan-button" type="button">SCAN</button>
+        </div>
+        <button id="connectButton" class="primary-button full" type="button">CONNECT BUS</button>
+        <button id="idStationNavButton" class="id-station-nav-button" type="button">
+          <span class="id-station-nav-icon">ID</span>
+          <span><strong>QUICK ID STATION</strong><small>PLUG · PROGRAM · VERIFY</small></span>
+          <b>→</b>
+        </button>
+        <div class="hardware-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4.5 13H11l-1 9 8.5-12H12l1-8Z"/></svg>
+          <div><strong>SERIAL BUS ADAPTER</strong><span>Half-duplex TTL · External servo power</span></div>
+        </div>
+      </section>
+
+      <section class="motor-panel">
+        <div class="section-heading">
+          <div><span class="section-index">02</span><h2>SERVOS</h2></div>
+          <span id="motorCount" class="count-badge">0</span>
+        </div>
+        <button id="busOverviewButton" class="bus-overview-button" type="button">
+          <span class="bus-overview-icon">⌘</span>
+          <span><strong>BUS DASHBOARD</strong><small>ALL MOTOR TELEMETRY</small></span>
+          <b>→</b>
+        </button>
+        <div id="motorList" class="motor-list">
+          <div class="empty-list"><span>—</span><p>Connect a bus to discover motors</p></div>
+        </div>
+      </section>
+
+      <section class="protocol-note">
+        <div class="mono-label">LINK PROFILE</div>
+        <dl>
+          <div><dt>Protocol</dt><dd>SCS / P0</dd></div>
+          <div><dt>Bus</dt><dd>Half-duplex TTL</dd></div>
+          <div><dt>Resolution</dt><dd>12 bit</dd></div>
+        </dl>
+      </section>
+    </aside>
+
+    <main class="main-stage">
+      <section id="welcomeState" class="welcome-state">
+        <div class="welcome-visual">
+          <div class="orbital orbital-1"></div><div class="orbital orbital-2"></div>
+          <img class="welcome-mark" src="/nori-mark.png" alt="">
+        </div>
+        <p class="kicker">// NORI SERVO LAB</p>
+        <h1>Small servo.<br><span>Big personality.</span></h1>
+        <p class="welcome-copy">A friendly workbench for live feedback, motion tuning, position memories, and repeatable Feetech characterization.</p>
+        <div class="welcome-steps">
+          <div><span>1</span><p><strong>POWER</strong>Use a current-limited supply matched to the servo.</p></div>
+          <div><span>2</span><p><strong>CONNECT</strong>Attach a compatible half-duplex serial adapter.</p></div>
+          <div><span>3</span><p><strong>DISCOVER</strong>Select the port and connect the bus.</p></div>
+        </div>
+        <button id="welcomeIdStationButton" class="welcome-id-station-button" type="button"><span>ID</span> OPEN QUICK ID STATION</button>
+      </section>
+
+      <section id="idStationView" class="id-station-page hidden">
+        <div class="id-station-header">
+          <div>
+            <button id="idStationBackButton" class="back-to-bus" type="button">← MOTORLAB HOME</button>
+            <p class="kicker">// GUARDED EEPROM WORKFLOW</p>
+            <h1>Quick ID station</h1>
+            <p>Keep one motor on the adapter. MotorLab detects it, disables torque, assigns the next ID, verifies it, then waits for you to unplug it.</p>
+          </div>
+          <span id="idStationStatusChip" class="id-station-status-chip">IDLE</span>
+        </div>
+
+        <div class="id-station-grid">
+          <article class="id-station-config card">
+            <div class="card-label"><span>SESSION SETUP</span><em>ONE MOTOR AT A TIME</em></div>
+            <div class="id-station-card-body">
+              <div class="id-mode-grid" role="radiogroup" aria-label="ID assignment mode">
+                <label class="id-mode-option"><input id="idModeSingle" type="radio" name="idStationMode" value="single" checked><span><strong>SINGLE ID</strong><small>Use the same target for every motor</small></span></label>
+                <label class="id-mode-option"><input id="idModeSequential" type="radio" name="idStationMode" value="sequential"><span><strong>SEQUENTIAL ID</strong><small>Advance through an inclusive range</small></span></label>
+              </div>
+
+              <div class="id-station-fields">
+                <label class="id-field id-port-field">SERIAL ADAPTER<div class="select-wrap"><select id="idStationPortSelect"><option value="">No USB adapter detected</option></select><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></div></label>
+                <label class="id-field">INPUT BAUD<div class="select-wrap"><select id="idStationBaudSelect"><option value="1000000">1,000,000</option><option value="500000">500,000</option><option value="250000">250,000</option><option value="128000">128,000</option><option value="115200">115,200</option><option value="57600">57,600</option><option value="38400">38,400</option><option value="19200">19,200</option></select><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></div></label>
+                <label class="id-field">MODEL FILTER<div class="select-wrap"><select id="idStationModelSelect"><option value="auto">AUTO · 3215 / 3250 / 3095</option><option value="sts3215">STS3215 ONLY</option><option value="sts3250">STS3250 ONLY</option><option value="sts3095">STS3095 ONLY</option></select><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></div></label>
+              </div>
+
+              <div id="idSingleFields" class="id-assignment-panel">
+                <div><span>SAME ID, EVERY TIME</span><p>Each newly plugged motor is assigned this ID.</p></div>
+                <label>TARGET ID<input id="idSingleTarget" type="number" min="1" max="253" step="1" value="1"></label>
+              </div>
+
+              <div id="idSequentialFields" class="id-assignment-panel hidden">
+                <div><span>INCLUSIVE SEQUENCE</span><p>Assign start, start + 1, through end.</p></div>
+                <label>START ID<input id="idSequenceStart" type="number" min="1" max="253" step="1" value="1"></label>
+                <label>END ID<input id="idSequenceEnd" type="number" min="1" max="253" step="1" value="7"></label>
+                <label class="id-loop-toggle"><input id="idSequenceLoop" type="checkbox"><span><b>LOOP RANGE</b><small>After the end ID, wrap to the start ID</small></span></label>
+              </div>
+
+              <div class="id-station-safety-note"><strong>EXCLUSIVE ADAPTER</strong><p>The normal servo bus must be disconnected. Multiple responders, unsupported models, and unstable scans are rejected without writing.</p></div>
+              <button id="idStationStartButton" class="primary-button full id-station-start" type="button">START ID STATION</button>
+            </div>
+          </article>
+
+          <article class="id-station-live card">
+            <div class="card-label"><span>LIVE STATION</span><em id="idStationPhaseLabel">IDLE</em></div>
+            <div class="id-station-card-body">
+              <div class="id-target-display">
+                <span>NEXT TARGET</span>
+                <strong id="idStationTarget">—</strong>
+                <small>ID</small>
+              </div>
+              <div class="id-station-count"><span>VERIFIED MOTORS</span><strong id="idStationCompleted">0</strong></div>
+              <p id="idStationMessage" class="id-station-message">Configure a session, then start the ID station.</p>
+              <div id="idStationDetected" class="id-detected-card empty"><span class="id-detected-icon">?</span><div><strong>NO MOTOR DETECTED</strong><small>Waiting for a session</small></div></div>
+              <div id="idStationSimulationControls" class="id-simulation-controls hidden"><span>SIMULATION TEST CONTROLS</span><div><button id="idSimPlugButton" type="button">PLUG MOTOR</button><button id="idSimUnplugButton" type="button">UNPLUG MOTOR</button></div></div>
+              <button id="idStationStopButton" class="danger-outline full" type="button" disabled>STOP ID STATION</button>
+            </div>
+          </article>
+
+          <article class="id-station-log card">
+            <div class="card-label"><span>SESSION LOG</span><em>SCAN · WRITE · PING · FINAL SCAN</em></div>
+            <div id="idStationEventLog" class="id-station-event-log"><div class="id-log-empty">No ID-station events yet.</div></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="busDashboard" class="bus-dashboard hidden">
+        <div class="bus-dashboard-header">
+          <div>
+            <p class="kicker">// LIVE BUS CHAIN</p>
+            <h1>Motor fleet overview</h1>
+            <p>Health, power, motion, and effort across every servo on the active bus chain.</p>
+          </div>
+          <button id="busEstopButton" class="estop-button bus-estop-button" type="button"><span>STOP</span><small>ALL TORQUE OFF</small></button>
+        </div>
+
+        <div class="bus-summary-grid">
+          <article class="bus-summary-card online"><span>ONLINE MOTORS</span><strong id="busOnlineCount">0 / 0</strong><small id="busLinkSummary">WAITING FOR BUS</small></article>
+          <article class="bus-summary-card armed"><span>ARMED</span><strong id="busArmedCount">0</strong><small id="busMovingCount">0 MOVING</small></article>
+          <article class="bus-summary-card current"><span>TOTAL CURRENT</span><strong id="busTotalCurrent">0.000 A</strong><small id="busTotalTorque">≈ 0.00 N·m EST.</small></article>
+          <article class="bus-summary-card thermal"><span>PEAK TEMPERATURE</span><strong id="busPeakTemp">—</strong><small id="busVoltageRange">— V BUS RANGE</small></article>
+          <article class="bus-summary-card faults"><span>ACTIVE FAULTS</span><strong id="busFaultCount">0</strong><small id="busCommCount">0 COMMS ERRORS</small></article>
+        </div>
+
+        <article class="bus-chain-card card">
+          <div class="card-label bus-chain-heading">
+            <div><span>BUS CHAIN</span><em id="busChainMeta">NO MOTORS</em></div>
+            <div class="chain-legend"><span><i class="online-dot"></i>ONLINE</span><span><i class="armed-dot"></i>ARMED</span><span><i class="fault-dot"></i>FAULT</span></div>
+          </div>
+          <div id="busChainNodes" class="bus-chain-nodes"></div>
+        </article>
+
+        <article class="group-control-card card">
+          <div class="card-label group-control-heading">
+            <div><span>ALL-MOTOR CONTROL</span><em>SHARED ANGLE TARGET · SHARED LIMITS</em></div>
+            <span id="groupControlStatus" class="group-control-status">TORQUE RELEASED</span>
+          </div>
+          <div class="group-control-body">
+            <div class="group-control-intro">
+              <div><strong>Move the full chain together</strong><p>Motion requires every motor online, armed, and in angle-servo mode. Encoder centering instead requires the full chain torque-off.</p></div>
+              <div class="group-intro-actions">
+                <button id="groupCenterEncoderButton" class="center-encoder-button" type="button" disabled>SET ALL HERE = 2048</button>
+                <button id="groupTorqueButton" class="group-torque-button" type="button"><span class="status-dot"></span><span id="groupTorqueButtonText">ARM ALL MOTORS</span></button>
+              </div>
+            </div>
+            <div class="group-target-control">
+              <div class="group-control-label"><label for="groupTargetSlider">SHARED TARGET POSITION</label><div class="dual-input"><input id="groupTargetInput" type="number" min="0" max="4095" value="2048"><span>RAW</span></div></div>
+              <input id="groupTargetSlider" class="range" type="range" min="0" max="4095" value="2048">
+            </div>
+            <div class="group-jog-control">
+              <div class="jog-copy"><span>JOG FULL CHAIN</span><small id="groupJogHint">Arm every motor in angle mode to jog each one from its latest target.</small></div>
+              <button id="groupJogMinusButton" class="jog-button" type="button" disabled><span>−</span> JOG ALL</button>
+              <label class="jog-step">STEP °<input id="groupJogStepSelect" type="number" min="0.1" max="180" step="0.1" value="5" inputmode="decimal" aria-label="Full-chain jog step in degrees"></label>
+              <button id="groupJogPlusButton" class="jog-button" type="button" disabled>JOG ALL <span>＋</span></button>
+            </div>
+            <div class="group-limit-grid">
+              <label><span>VELOCITY LIMIT</span><input id="groupVelocitySlider" class="range" type="range" min="0" max="3073" value="600"><input id="groupVelocityOutput" class="limit-number-input" type="number" min="0" max="3073" step="1" value="600" aria-label="Full-chain velocity limit"></label>
+              <label><span>ACCELERATION</span><input id="groupAccelerationSlider" class="range" type="range" min="0" max="254" value="40"><input id="groupAccelerationOutput" class="limit-number-input" type="number" min="0" max="254" step="1" value="40" aria-label="Full-chain acceleration"></label>
+              <label><span>TORQUE LIMIT · RAW</span><input id="groupTorqueSlider" class="range" type="range" min="0" max="1000" value="500"><input id="groupTorqueOutput" class="limit-number-input" type="number" min="0" max="1000" step="1" value="500" aria-label="Full-chain raw torque limit"></label>
+            </div>
+            <div class="group-control-actions"><p>Nothing is sent until you press the command button.</p><button id="groupCommandButton" class="primary-button" type="button" disabled>COMMAND ALL MOTORS</button></div>
+          </div>
+        </article>
+
+        <details class="advanced-card bus-eeprom-card card">
+          <summary>
+            <div><span class="section-index">EEP</span><strong>BUS-WIDE EEPROM CONFIGURATION</strong><small>Write selected PID, travel, thermal, and voltage values to every connected motor</small></div>
+            <span id="groupConfigState" class="group-config-state">TORQUE MUST BE OFF</span>
+            <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="advanced-body">
+            <div class="warning-banner"><strong>PERSISTENT BUS WRITE</strong><p>The complete chain is preflighted first. Only edited fields are written; each register is read back before the next motor is changed.</p></div>
+            <div class="config-grid group-config-grid">
+              <label>P GAIN<input id="groupConfigP" data-group-config-key="p_gain" type="number" min="0" max="254"></label>
+              <label>D GAIN<input id="groupConfigD" data-group-config-key="d_gain" type="number" min="0" max="254"></label>
+              <label>I GAIN<input id="groupConfigI" data-group-config-key="i_gain" type="number" min="0" max="254"></label>
+              <label>MIN POSITION<input id="groupConfigMinPosition" data-group-config-key="min_position" type="number" min="0" max="4095"></label>
+              <label>MAX POSITION<input id="groupConfigMaxPosition" data-group-config-key="max_position" type="number" min="0" max="4095"></label>
+              <label>MAX TEMPERATURE °C<input id="groupConfigMaxTemp" data-group-config-key="max_temperature" type="number" min="40" max="85"></label>
+              <label>MIN VOLTAGE × 0.1 V<input id="groupConfigMinVoltage" data-group-config-key="min_voltage" type="number" min="40" max="140"></label>
+              <label>MAX VOLTAGE × 0.1 V<input id="groupConfigMaxVoltage" data-group-config-key="max_voltage" type="number" min="40" max="140"></label>
+            </div>
+            <div class="advanced-footer group-config-footer"><span id="groupConfigDirtySummary">Edit one or more fields to stage a bus-wide write.</span><button id="groupWriteConfigButton" class="danger-outline" type="button" disabled>VERIFY & WRITE TO ALL</button></div>
+          </div>
+        </details>
+
+        <div class="bus-section-heading">
+          <div><span class="section-index">03</span><div><h2>INDIVIDUAL MOTOR TELEMETRY</h2><p>Every live motor reading in one place. Click a motor to open its controls, captures, and persistent settings.</p></div></div>
+          <span id="busUpdatedAt">LIVE</span>
+        </div>
+        <div id="busMotorCards" class="bus-motor-cards"></div>
+      </section>
+
+      <section id="dashboard" class="dashboard hidden">
+        <div class="motor-header">
+          <div>
+            <button id="backToBusButton" class="back-to-bus" type="button">← BUS DASHBOARD</button>
+            <div class="header-breadcrumb"><span>ACTIVE SERVO</span><i></i><span id="headerStatus">ONLINE</span></div>
+            <h1><span id="headerModel">STS3215</span><em id="headerId">ID 01</em></h1>
+            <p id="headerVariant">ST-3215-C018 · 12 V</p>
+          </div>
+          <div class="header-actions">
+            <a id="datasheetLink" class="document-link" href="#" target="_blank">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6M8 13h8M8 17h5"/></svg>
+              DATASHEET
+            </a>
+            <button id="torqueButton" class="torque-button" type="button"><span class="status-dot"></span><span>ARM TORQUE</span></button>
+            <button id="estopButton" class="estop-button" type="button"><span>STOP</span><small>ALL TORQUE OFF</small></button>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="position-card card">
+            <div class="card-label"><span>POSITION</span><div class="position-card-tools"><em>LIVE ENCODER</em><button id="centerEncoderButton" class="center-encoder-button" type="button" disabled>SET HERE = 2048</button></div></div>
+            <div class="position-layout">
+              <div id="positionDial" class="position-dial">
+                <div class="dial-ticks"></div>
+                <div class="dial-core"><strong id="positionDegrees">180.0°</strong><span id="positionRaw">2048 RAW</span></div>
+                <i id="dialNeedle"></i>
+              </div>
+              <div class="position-detail">
+                <div><span id="targetReadoutLabel">TARGET</span><strong id="targetReadout">2048</strong><small id="targetReadoutUnit">RAW</small></div>
+                <div><span>ERROR</span><strong id="errorReadout">0</strong><small>STEPS</small></div>
+                <div><span>STATE</span><strong id="motionReadout">HOLD</strong><small id="modeReadout">MODE 0</small></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="telemetry-card card">
+            <div class="card-label"><span>TELEMETRY</span><em id="sampleStatus">WAITING</em></div>
+            <div class="telemetry-grid">
+              <div class="metric"><span class="metric-name">VELOCITY</span><strong id="velocityValue">0</strong><small>RAW <b id="rpmValue">~0 RPM</b></small><i class="metric-accent blue"></i></div>
+              <div class="metric"><span class="metric-name">LOAD / EFFORT</span><strong id="loadValue">0.0%</strong><small id="loadRaw">0 RAW</small><i class="metric-accent orange"></i></div>
+              <div class="metric"><span class="metric-name">INPUT VOLTAGE</span><strong id="voltageValue">12.0 V</strong><small id="voltageState">NOMINAL</small><i class="metric-accent green"></i></div>
+              <div class="metric"><span class="metric-name">TEMPERATURE</span><strong id="temperatureValue">25°C</strong><small id="temperatureState">NOMINAL</small><i class="metric-accent pink"></i></div>
+              <div class="metric current-torque-metric" title="Current-based estimate: torque ≈ Kt × current. Not a calibrated torque sensor.">
+                <span class="metric-name">MOTOR CURRENT</span>
+                <strong id="currentValue">0.000 A</strong>
+                <small id="currentRaw">0 RAW · 6.5 mA/LSB</small>
+                <div class="torque-readout">
+                  <span>ESTIMATED TORQUE</span>
+                  <strong id="torqueEstimate">≈ 0.00 N·m · 0.0 kgf·cm</strong>
+                  <small>CURRENT-BASED · NOT SENSOR-MEASURED</small>
+                </div>
+                <i class="metric-accent purple"></i>
+              </div>
+              <div class="metric"><span class="metric-name">DEVICE STATUS</span><strong id="deviceStatus">CLEAR</strong><small id="commErrors">0 COMMS ERRORS</small><i class="metric-accent green"></i></div>
+            </div>
+          </article>
+        </div>
+
+        <article class="chart-card card">
+          <div class="card-label chart-heading">
+            <div><span>LIVE TRACE</span><em>ROLLING 24 SECONDS</em></div>
+            <div class="chart-legend"><span class="position-series">POSITION</span><span class="target-series">TARGET</span><span class="load-series">LOAD %</span></div>
+          </div>
+          <div class="chart-wrap"><canvas id="traceChart"></canvas><div class="chart-axis"><span>4095</span><span>2048</span><span>0</span></div></div>
+        </article>
+
+        <div class="control-grid">
+          <article class="control-card card">
+            <div class="card-label"><span>MOTION CONTROL</span><em>MODE EEPROM · COMMANDS SRAM</em></div>
+            <div class="mode-control">
+              <div class="mode-select-copy">
+                <label for="modeSelect">OPERATING MODE</label>
+                <p id="modeHelp">Absolute 0–360° position control with velocity and acceleration limits.</p>
+              </div>
+              <div class="mode-select-actions">
+                <div class="select-wrap">
+                  <select id="modeSelect">
+                    <option value="0">0 · Angle servo</option>
+                    <option value="1">1 · Closed-loop speed</option>
+                    <option value="2">2 · Open-loop speed</option>
+                    <option value="3">3 · Relative step</option>
+                  </select>
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+                </div>
+                <button id="applyModeButton" class="secondary-button" type="button">SWITCH</button>
+              </div>
+            </div>
+            <div class="target-control">
+              <div class="target-header">
+                <label id="motionCommandLabel" for="targetSlider">TARGET POSITION</label>
+                <div class="dual-input"><input id="targetInput" type="number" min="0" max="4095" value="2048"><span id="targetInputUnit">RAW</span></div>
+              </div>
+              <input id="targetSlider" class="range position-range" type="range" min="0" max="4095" value="2048">
+              <div class="range-scale"><span id="commandMinLabel">0 / 0°</span><button id="centerButton" type="button">SET CENTER · 2048</button><span id="commandMaxLabel">4095 / 360°</span></div>
+            </div>
+            <div class="jog-control">
+              <div class="jog-copy"><span>INCREMENTAL JOG</span><small id="jogHint">Arm torque in angle-servo mode to jog from the current target.</small></div>
+              <button id="jogMinusButton" class="jog-button" type="button" disabled><span>−</span> JOG</button>
+              <label class="jog-step">STEP °<input id="jogStepSelect" type="number" min="0.1" max="180" step="0.1" value="5" inputmode="decimal" aria-label="Motor jog step in degrees"></label>
+              <button id="jogPlusButton" class="jog-button" type="button" disabled>JOG <span>＋</span></button>
+            </div>
+            <div class="parameter-stack">
+              <div id="velocityRow" class="parameter-row">
+                <div><label for="velocitySlider">VELOCITY LIMIT</label><small>Goal velocity register</small></div>
+                <input id="velocitySlider" class="range" type="range" min="0" max="3073" value="600">
+                <input id="velocityOutput" class="parameter-number-input" type="number" min="0" max="3073" step="1" value="600" aria-label="Velocity limit">
+              </div>
+              <div class="parameter-row">
+                <div><label for="accelerationSlider">ACCELERATION</label><small>Ramp rate</small></div>
+                <input id="accelerationSlider" class="range" type="range" min="0" max="254" value="40">
+                <input id="accelerationOutput" class="parameter-number-input" type="number" min="0" max="254" step="1" value="40" aria-label="Acceleration">
+              </div>
+              <div class="parameter-row torque-parameter-row">
+                <div><label for="torqueSlider">TORQUE LIMIT</label><small>Output cap · raw</small></div>
+                <div class="torque-limit-track">
+                  <button id="torqueRatedMarker" class="torque-rated-marker hidden" type="button"><span id="torqueRatedLabel">RATED</span></button>
+                  <input id="torqueSlider" class="range" type="range" min="0" max="1000" value="500">
+                </div>
+                <div id="torqueOutput" class="torque-limit-output" title="Measured current is load-dependent; this readout shows live and session-peak telemetry.">
+                  <input id="torqueRawOutput" class="torque-raw-input" type="number" min="0" max="1000" step="1" value="500" aria-label="Raw torque limit">
+                  <small id="torqueCurrentOutput">LIVE 0.000 A</small>
+                  <small id="torquePeakCurrentOutput">PEAK 0.000 A</small>
+                </div>
+              </div>
+            </div>
+            <div class="control-actions">
+              <button id="applyParameters" class="secondary-button" type="button">APPLY LIMITS</button>
+              <button id="goButton" class="primary-button" type="button"><span id="goButtonText">GO TO TARGET</span> <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+            <p id="torqueHint" class="torque-hint"><span></span>Torque is released. Arm the servo before commanding motion.</p>
+          </article>
+
+          <article class="capture-card card">
+            <div class="card-label capture-heading">
+              <div><span>POSITION MEMORY</span><em>RECALL POINTS</em></div>
+              <button id="captureButton" class="capture-button" type="button"><span>＋</span> CAPTURE CURRENT</button>
+            </div>
+            <div id="captureList" class="capture-list">
+              <div class="capture-empty"><div class="crosshair"></div><strong>NO POSITIONS YET</strong><p>Move the servo by hand with torque released, then capture its live position.</p></div>
+            </div>
+          </article>
+        </div>
+
+        <details class="advanced-card card">
+          <summary>
+            <div><span class="section-index">ADV</span><strong>PERSISTENT DEVICE CONFIGURATION</strong><small>PID, travel, thermal and voltage limits</small></div>
+            <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="advanced-body">
+            <div class="warning-banner"><strong>EEPROM WRITE</strong><p>Torque must be released. Values are range-checked, written one at a time, read back, and verified.</p></div>
+            <div class="config-grid">
+              <label>P GAIN<input id="configP" type="number" min="0" max="254"></label>
+              <label>D GAIN<input id="configD" type="number" min="0" max="254"></label>
+              <label>I GAIN<input id="configI" type="number" min="0" max="254"></label>
+              <label>MIN POSITION<input id="configMinPosition" type="number" min="0" max="4095"></label>
+              <label>MAX POSITION<input id="configMaxPosition" type="number" min="0" max="4095"></label>
+              <label>MAX TEMPERATURE °C<input id="configMaxTemp" type="number" min="40" max="85"></label>
+              <label>MIN VOLTAGE × 0.1 V<input id="configMinVoltage" type="number" min="40" max="140"></label>
+              <label>MAX VOLTAGE × 0.1 V<input id="configMaxVoltage" type="number" min="40" max="140"></label>
+            </div>
+            <div class="advanced-footer"><span>Persistent writes are never issued by sliders.</span><button id="writeConfigButton" class="danger-outline" type="button">VERIFY & WRITE EEPROM</button></div>
+          </div>
+        </details>
+
+        <footer class="spec-footer">
+          <div><span>MODEL PROFILE</span><strong id="specModel">STS3215 / #777</strong></div>
+          <div><span>STALL TORQUE</span><strong id="specTorque">30 kg·cm</strong></div>
+          <div><span>STALL CURRENT</span><strong id="specCurrent">2.7 A</strong></div>
+          <div><span>INPUT RANGE</span><strong id="specVoltage">4–14 V</strong></div>
+          <div><span>OPERATING TEMP</span><strong id="specTemp">−10–60 °C</strong></div>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="safetyDialog" class="safety-dialog" aria-labelledby="safetyDialogTitle" aria-describedby="safetyDialogMessage safetyDialogDetails">
+    <form method="dialog" class="safety-dialog-shell">
+      <div class="safety-dialog-header">
+        <div class="safety-dialog-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z"/><path d="M12 8v5M12 16.5v.01"/></svg>
+        </div>
+        <div>
+          <span id="safetyDialogEyebrow" class="safety-dialog-eyebrow">MOTION SAFETY</span>
+          <h2 id="safetyDialogTitle">Confirm this action</h2>
+        </div>
+      </div>
+      <div class="safety-dialog-body">
+        <p id="safetyDialogMessage"></p>
+        <ul id="safetyDialogDetails" class="safety-dialog-details"></ul>
+        <label class="safety-dialog-skip" for="safetyDialogDontAsk">
+          <input id="safetyDialogDontAsk" type="checkbox">
+          <span class="safety-dialog-checkbox" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m3.5 8.2 2.8 2.8 6.2-6.2"/></svg></span>
+          <span><strong id="safetyDialogDontAskLabel">Don't ask again for this warning</strong><small>You can restore hidden confirmations from the shield button.</small></span>
+        </label>
+      </div>
+      <div class="safety-dialog-actions">
+        <button id="safetyDialogCancel" class="safety-dialog-cancel" type="submit" value="cancel" autofocus>CANCEL</button>
+        <button id="safetyDialogConfirm" class="safety-dialog-confirm" type="submit" value="confirm">CONTINUE</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"><span class="toast-mark"></span><p id="toastMessage"></p></div>
+  <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><strong id="busyText">CONNECTING</strong></div>
+  <script src="/app.js?v=20260807-web-id-station" defer></script>
+</body>
+</html>

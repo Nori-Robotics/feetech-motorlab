@@ -1,0 +1,11 @@
+Feetech MotorLab
+Copyright (c) 2026 NORI Robotics contributors
+
+The Feetech datasheets under docs/datasheets/ are manufacturer reference
+documents and are not covered by the repository's MIT License. Their source
+URLs and checksums are recorded in docs/datasheets/README.md.
+
+NORI names, marks, and logos remain the property of their respective owner.
+Feetech, Waveshare, and other third-party names and marks belong to their
+respective owners. Their inclusion identifies compatibility and does not imply
+endorsement.

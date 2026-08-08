@@ -1,0 +1,1 @@
+"""Feetech characterization bench application."""
