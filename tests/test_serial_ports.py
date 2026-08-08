@@ -14,6 +14,7 @@ class FakePort:
     manufacturer: str | None = None
     vid: int | None = None
     pid: int | None = None
+    hwid: str | None = None
 
 
 class SerialPortDiscoveryTests(unittest.TestCase):
@@ -36,6 +37,17 @@ class SerialPortDiscoveryTests(unittest.TestCase):
         self.assertEqual(found[1]["manufacturer"], "Adapter Vendor")
         self.assertEqual(found[1]["vid"], "1234")
         self.assertNotIn("waveshare_hint", found[1])
+
+    @patch("app.serial_ports.glob.glob", return_value=[])
+    def test_ignores_unidentifiable_linux_uart_placeholders(self, _glob) -> None:
+        ports = [
+            FakePort("/dev/ttyS0", "n/a", hwid="n/a"),
+            FakePort("/dev/ttyS1", "External UART", hwid="PNP0501"),
+        ]
+        with patch("app.serial_ports._listed_ports", return_value=ports):
+            found = discover_serial_ports()
+
+        self.assertEqual([item["device"] for item in found], ["/dev/ttyS1"])
 
 
 if __name__ == "__main__":

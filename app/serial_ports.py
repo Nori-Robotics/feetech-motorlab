@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,17 @@ def serial_port_available(device: str) -> bool:
     )
 
 
+def _is_placeholder_linux_uart(port: Any) -> bool:
+    """Hide kernel UART placeholders that have no usable device metadata."""
+    device = str(getattr(port, "device", ""))
+    description = str(getattr(port, "description", "") or "").strip().lower()
+    hwid = str(getattr(port, "hwid", "") or "").strip().lower()
+    return bool(re.fullmatch(r"/dev/ttyS\d+", device)) and description in {
+        "",
+        "n/a",
+    } and hwid in {"", "n/a"}
+
+
 def discover_serial_ports() -> list[dict[str, Any]]:
     """Return serial ports on Linux, macOS, and Windows.
 
@@ -50,7 +62,7 @@ def discover_serial_ports() -> list[dict[str, Any]]:
         sorted(
             str(getattr(port, "device", ""))
             for port in listed
-            if getattr(port, "device", None)
+            if getattr(port, "device", None) and not _is_placeholder_linux_uart(port)
         )
     )
     # These fallbacks keep discovery useful if pyserial cannot enumerate but
