@@ -194,7 +194,7 @@ static/              Browser interface and local visual assets
 tests/               Hardware-free simulation and unit tests
 docs/datasheets/     Referenced vendor datasheets and source notes
 data/recordings/     Runtime CSV output; recordings are ignored by Git
-artifacts/           Reproducible release video and poster
+artifacts/           Reproducible release video
 run.py               Portable application launcher
 ```
 
@@ -220,16 +220,15 @@ plug, verification, and unplug steps. Preview it at
 `http://127.0.0.1:8765/?release-demo=1#bus` while running with `--simulate`.
 The sequence refuses to run unless the server reports simulation mode.
 
-With Node.js 22 or newer, Google Chrome, and FFmpeg available, reproduce the X-ready MP4
-and its poster frame from the project root:
+With Node.js 22 or newer, Google Chrome, and FFmpeg available, reproduce the
+X-ready MP4 from the project root:
 
 ```bash
 node scripts/capture_release_demo.mjs
 ```
 
 The capture script starts its own isolated simulated server and writes
-`artifacts/motorlab-x-release.mp4` plus
-`artifacts/motorlab-x-release-poster.png`.
+`artifacts/motorlab-x-release.mp4`.
 
 ## Documentation and sources
 
