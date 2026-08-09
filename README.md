@@ -1,9 +1,15 @@
-# Feetech MotorLab
+# NORI MotorLab
 
-A browser-based bench tool for testing and characterizing 12 V Feetech
-STS3215, STS3250, and STS3095 servos. MotorLab provides multi-servo telemetry,
+NORI MotorLab is a browser-based workspace for testing and characterizing 12 V
+Feetech STS3215, STS3250, and STS3095 servos. MotorLab provides multi-servo telemetry,
 individual and bus-wide motion controls, live tuning, recording, encoder
 centering, EEPROM configuration, and a guarded motor-ID station.
+
+[![Watch the NORI MotorLab release demo](artifacts/motorlab-x-release-poster.png)](artifacts/motorlab-x-release.mp4)
+
+[Watch the 24-second release demo (MP4)](artifacts/motorlab-x-release.mp4),
+including live simulated telemetry, synchronized motion, and a guarded motor
+ID change from 1 to 7.
 
 The application does not depend on a particular workstation, serial path, or
 USB bridge. It enumerates serial ports through pyserial on Linux, macOS, and
@@ -66,19 +72,21 @@ Useful launcher options:
 --port PORT         HTTP port; defaults to 8765
 --no-browser        Do not open a browser automatically
 --simulate          Use the built-in three-motor simulator
+--allow-remote      Acknowledge non-loopback access risk
 ```
 
 Binding to `0.0.0.0` exposes a hardware-control interface to the local network.
 MotorLab has no authentication layer, so only do this on a trusted, isolated
-network. If dependencies live in a separate Python installation, set
-`FEETECH_PYTHON` to that interpreter before launching; no machine-specific
-fallback path is built into the application.
+network and pass `--allow-remote` explicitly. MotorLab talks to the Feetech
+protocol through its local `feetech-servo-sdk` wrapper and does not require
+LeRobot or its machine-learning dependencies.
 
 ## Connect a bus
 
 1. Wire the adapter, shared ground, external supply, and servos with power off.
 2. Power the servo bus and connect the adapter to the host.
-3. Select the enumerated serial port and the current motor baud rate. Linux
+3. Select the enumerated serial port and the current motor baud rate. The list
+   updates automatically when adapters are plugged in or removed. Linux
    `/dev/serial/by-id/...` aliases are shown first when available because they
    remain stable across reconnects; macOS device names and Windows COM ports
    are discovered without configuration.
@@ -86,8 +94,10 @@ fallback path is built into the application.
    baud rate is `1,000,000`.
 
 MotorLab accepts every supported responder on the selected chain and rejects
-unsupported models from control. It never assumes a fixed port, motor ID, or
-number of motors.
+unsupported models from control. While connected, it periodically runs
+read-only discovery so newly plugged supported motors appear automatically and
+removed motors disappear after confirmation. It never assumes a fixed port,
+motor ID, or number of motors.
 
 ## Dashboard and controls
 
@@ -186,6 +196,7 @@ static/              Browser interface and local visual assets
 tests/               Hardware-free simulation and unit tests
 docs/datasheets/     Referenced vendor datasheets and source notes
 data/recordings/     Runtime CSV output; recordings are ignored by Git
+artifacts/           Reproducible release video and poster
 run.py               Portable application launcher
 ```
 
@@ -202,9 +213,31 @@ real motor torque.
 python -m unittest discover -s tests -v
 ```
 
+## Release announcement demo
+
+MotorLab includes a recordable 16:9 launch sequence that drives the real
+three-motor simulator through group arming, synchronized motion, live
+single-servo telemetry, and a guarded ID 1 to ID 7 assignment with simulated
+plug, verification, and unplug steps. Preview it at
+`http://127.0.0.1:8765/?release-demo=1#bus` while running with `--simulate`.
+The sequence refuses to run unless the server reports simulation mode.
+
+With Node.js 22 or newer, Google Chrome, and FFmpeg available, reproduce the X-ready MP4
+and its poster frame from the project root:
+
+```bash
+node scripts/capture_release_demo.mjs
+```
+
+The capture script starts its own isolated simulated server and writes
+`artifacts/motorlab-x-release.mp4` plus
+`artifacts/motorlab-x-release-poster.png`.
+
 ## Documentation and sources
 
 - [Local datasheet index and source provenance](docs/datasheets/README.md)
+- [Bundled font license and copyright notices](static/fonts/OFL-1.1.txt)
+- [`feetech-servo-sdk` compatibility package (The Unlicense)](https://pypi.org/project/feetech-servo-sdk/)
 - [Feetech official Python SDK](https://github.com/ftservo/FTServo_Python)
 - [Feetech STS3215 modes and current units](https://www.feetechrc.com/20210430-56680.html)
 - [Waveshare Bus Servo Adapter (A) guide](https://www.waveshare.com/wiki/Bus_Servo_Adapter_(A))

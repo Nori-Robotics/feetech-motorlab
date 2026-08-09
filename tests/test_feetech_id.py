@@ -4,8 +4,8 @@ import unittest
 
 from app.feetech_id import (
     DEFAULT_BAUDRATE,
-    FeetechApi,
     MOTOR_PROFILES,
+    FeetechApi,
     Response,
     TargetPlan,
     program_and_verify,
@@ -51,13 +51,9 @@ class DiscoveryGuardTests(unittest.TestCase):
         self.assertEqual(profile.name, "sts3215")
 
         with self.assertRaisesRegex(RuntimeError, "multiple responders"):
-            require_one_supported_response(
-                [one, Response("test-port", 1_000_000, 2, 777)], "auto"
-            )
+            require_one_supported_response([one, Response("test-port", 1_000_000, 2, 777)], "auto")
         with self.assertRaisesRegex(RuntimeError, "unsupported model"):
-            require_one_supported_response(
-                [Response("test-port", 1_000_000, 1, 9999)], "auto"
-            )
+            require_one_supported_response([Response("test-port", 1_000_000, 1, 9999)], "auto")
         with self.assertRaisesRegex(RuntimeError, "expected STS3250"):
             require_one_supported_response([one], "sts3250")
 

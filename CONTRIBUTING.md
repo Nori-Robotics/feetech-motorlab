@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for improving Feetech MotorLab. Keep changes portable across hosts,
+Thank you for improving NORI MotorLab. Keep changes portable across hosts,
 serial adapters, and motor IDs: never commit absolute user paths, fixed serial
 device names, or assumptions about how many motors are connected.
 
@@ -9,7 +9,7 @@ device names, or assumptions about how many motors are connected.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -r requirements-dev.txt
 python run.py --simulate
 ```
 
@@ -17,6 +17,8 @@ Run the hardware-free test suite before submitting a change:
 
 ```bash
 python -m unittest discover -s tests -v
+ruff check .
+bandit -q -r app run.py
 ```
 
 Hardware changes should also be checked on a current-limited bench. Start with

@@ -21,9 +21,7 @@ from app.controller import (
 class BenchControllerSimulationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.controller = BenchController(
-            simulation=True, data_dir=Path(self.temporary.name)
-        )
+        self.controller = BenchController(simulation=True, data_dir=Path(self.temporary.name))
 
     def tearDown(self) -> None:
         self.controller.close()
@@ -34,8 +32,12 @@ class BenchControllerSimulationTests(unittest.TestCase):
         self.assertTrue(state["connected"])
         self.assertEqual([m["model"] for m in state["motors"]], ["STS3215", "STS3250", "STS3095"])
         self.assertTrue(all(not motor["torque_enabled"] for motor in state["motors"]))
-        self.assertTrue(all(motor["velocity_limit"] == DEFAULT_VELOCITY_LIMIT for motor in state["motors"]))
-        self.assertTrue(all(motor["acceleration"] == DEFAULT_ACCELERATION for motor in state["motors"]))
+        self.assertTrue(
+            all(motor["velocity_limit"] == DEFAULT_VELOCITY_LIMIT for motor in state["motors"])
+        )
+        self.assertTrue(
+            all(motor["acceleration"] == DEFAULT_ACCELERATION for motor in state["motors"])
+        )
         self.assertEqual(
             [motor["rated_torque_limit_raw"] for motor in state["motors"]],
             [333, 320, None],
@@ -67,6 +69,89 @@ class BenchControllerSimulationTests(unittest.TestCase):
         finally:
             controller.close()
 
+    def test_live_chain_reconciliation_adds_and_confirmed_removes(self) -> None:
+        class DynamicBus:
+            def __init__(self) -> None:
+                self.motors = {}
+                self.registered: list[str] = []
+                self.removed: list[str] = []
+
+            def register_motor(self, name, motor) -> None:
+                self.motors[name] = motor
+                self.registered.append(name)
+
+            def unregister_motor(self, name) -> None:
+                self.motors.pop(name, None)
+                self.removed.append(name)
+
+        controller = BenchController(
+            simulation=False, data_dir=Path(self.temporary.name) / "live-chain"
+        )
+        bus = DynamicBus()
+        try:
+            initial = controller._new_motor_state(1, 777)
+            bus.motors["servo_1"] = object()
+            controller._bus = bus
+            controller._motors = {1: initial}
+            controller._selected_id = 1
+
+            def refresh(motor):
+                motor.online = True
+                motor.position = 1800 + motor.id
+                motor.torque_enabled = motor.id == 2
+
+            controller._refresh_motor_locked = refresh
+            controller._read_config_locked = lambda motor: setattr(
+                motor, "config", controller._default_config()
+            )
+
+            with controller._lock:
+                controller._reconcile_chain_locked({1: 777, 2: 2825})
+            self.assertEqual(list(controller._motors), [1, 2])
+            self.assertEqual(bus.registered, ["servo_2"])
+            self.assertTrue(controller._motors[2].torque_enabled)
+            self.assertIn("torque was already enabled", controller._message)
+
+            with controller._lock:
+                controller._reconcile_chain_locked({2: 2825})
+            self.assertIn(1, controller._motors)
+            with controller._lock:
+                controller._reconcile_chain_locked({2: 2825})
+            self.assertEqual(list(controller._motors), [2])
+            self.assertEqual(bus.removed, ["servo_1"])
+            self.assertEqual(controller._selected_id, 2)
+        finally:
+            controller._bus = None
+            controller.close()
+
+    def test_snapshot_carries_automatically_refreshed_ports(self) -> None:
+        snapshot = self.controller.snapshot()
+        self.assertEqual(snapshot["ports"][0]["device"], "SIMULATED_FEETECH_BUS")
+
+    def test_port_cache_refreshes_in_background_without_api_request(self) -> None:
+        controller = BenchController(
+            simulation=False, data_dir=Path(self.temporary.name) / "live-ports"
+        )
+        detected = {
+            "device": "TEST_PORT_2",
+            "real_device": "TEST_PORT_2",
+            "label": "New USB adapter",
+            "manufacturer": "Test",
+            "vid": "1234",
+            "pid": "5678",
+        }
+        try:
+            controller._discover_ports = lambda: [detected]
+            controller._next_port_scan = 0
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                if controller.snapshot()["ports"] == [detected]:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(controller.snapshot()["ports"], [detected])
+        finally:
+            controller.close()
+
     def test_motion_requires_torque_and_then_reaches_target(self) -> None:
         with self.assertRaisesRegex(ControlError, "Arm torque"):
             self.controller.command_position(1, 2500)
@@ -82,16 +167,12 @@ class BenchControllerSimulationTests(unittest.TestCase):
         initial = self.controller.snapshot()
         self.assertEqual([motor["id"] for motor in initial["motors"]], [1, 2, 3])
         with self.assertRaisesRegex(ControlError, "Arm torque"):
-            self.controller.jog_position(
-                2, 57, velocity=600, acceleration=40, torque_limit=500
-            )
+            self.controller.jog_position(2, 57, velocity=600, acceleration=40, torque_limit=500)
 
         selected = self.controller.select_motor(2)
         self.assertEqual(selected["selected_id"], 2)
         self.controller.set_torque(2, True)
-        first = self.controller.jog_position(
-            2, 57, velocity=700, acceleration=45, torque_limit=550
-        )
+        first = self.controller.jog_position(2, 57, velocity=700, acceleration=45, torque_limit=550)
         second = self.controller.jog_position(
             2, 57, velocity=700, acceleration=45, torque_limit=550
         )
@@ -111,9 +192,7 @@ class BenchControllerSimulationTests(unittest.TestCase):
         )
         self.assertEqual(clamped["target_position"], 4095)
         with self.assertRaisesRegex(ControlError, "configured maximum"):
-            self.controller.jog_position(
-                2, 57, velocity=700, acceleration=45, torque_limit=550
-            )
+            self.controller.jog_position(2, 57, velocity=700, acceleration=45, torque_limit=550)
 
     def test_group_angle_command_requires_and_updates_every_motor(self) -> None:
         with self.assertRaisesRegex(ControlError, "Arm every motor"):
@@ -142,9 +221,7 @@ class BenchControllerSimulationTests(unittest.TestCase):
 
     def test_group_jog_preserves_offsets_and_preflights_every_limit(self) -> None:
         with self.assertRaisesRegex(ControlError, "Arm every motor"):
-            self.controller.jog_all_positions(
-                57, velocity=700, acceleration=45, torque_limit=550
-            )
+            self.controller.jog_all_positions(57, velocity=700, acceleration=45, torque_limit=550)
 
         self.controller.set_all_torque(True)
         for motor_id, target in ((1, 1800), (2, 2100), (3, 2400)):
@@ -169,16 +246,12 @@ class BenchControllerSimulationTests(unittest.TestCase):
             self.controller._motors[3].target_position = 4090
             self.controller._motors[3].config["max_position"] = 4095
         before = {
-            motor["id"]: motor["target_position"]
-            for motor in self.controller.snapshot()["motors"]
+            motor["id"]: motor["target_position"] for motor in self.controller.snapshot()["motors"]
         }
         with self.assertRaisesRegex(ControlError, "configured travel"):
-            self.controller.jog_all_positions(
-                57, velocity=800, acceleration=50, torque_limit=475
-            )
+            self.controller.jog_all_positions(57, velocity=800, acceleration=50, torque_limit=475)
         after = {
-            motor["id"]: motor["target_position"]
-            for motor in self.controller.snapshot()["motors"]
+            motor["id"]: motor["target_position"] for motor in self.controller.snapshot()["motors"]
         }
         self.assertEqual(after, before)
 
@@ -191,18 +264,14 @@ class BenchControllerSimulationTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlError, "exact confirmation"):
             self.controller.center_encoder_position(1, "CENTER")
 
-        centered = self.controller.center_encoder_position(
-            1, ENCODER_CENTER_CONFIRMATION
-        )
+        centered = self.controller.center_encoder_position(1, ENCODER_CENTER_CONFIRMATION)
         self.assertEqual(centered["position"], 2048)
         self.assertEqual(centered["target_position"], 2048)
         self.assertFalse(centered["torque_enabled"])
 
         self.controller.set_torque(1, True)
         with self.assertRaisesRegex(ControlError, "Release torque"):
-            self.controller.center_encoder_position(
-                1, ENCODER_CENTER_CONFIRMATION
-            )
+            self.controller.center_encoder_position(1, ENCODER_CENTER_CONFIRMATION)
 
     def test_hardware_center_uses_feetech_midpoint_command_and_readback(self) -> None:
         class CenterCommandBus:
@@ -244,9 +313,7 @@ class BenchControllerSimulationTests(unittest.TestCase):
                 controller._selected_id = 1
                 controller._connected = True
 
-            centered = controller.center_encoder_position(
-                1, ENCODER_CENTER_CONFIRMATION
-            )
+            centered = controller.center_encoder_position(1, ENCODER_CENTER_CONFIRMATION)
             self.assertEqual(centered["position"], 2048)
             self.assertEqual(
                 bus.writes[:3],
@@ -269,13 +336,9 @@ class BenchControllerSimulationTests(unittest.TestCase):
                 motor.target_position = position
             self.controller._motors[2].torque_enabled = True
 
-        before = [
-            motor["position"] for motor in self.controller.snapshot()["motors"]
-        ]
+        before = [motor["position"] for motor in self.controller.snapshot()["motors"]]
         with self.assertRaisesRegex(ControlError, "Release torque on ID 2"):
-            self.controller.center_all_encoder_positions(
-                ENCODER_CENTER_CONFIRMATION
-            )
+            self.controller.center_all_encoder_positions(ENCODER_CENTER_CONFIRMATION)
         self.assertEqual(
             [motor["position"] for motor in self.controller.snapshot()["motors"]],
             before,
@@ -283,16 +346,10 @@ class BenchControllerSimulationTests(unittest.TestCase):
 
         with self.controller._lock:
             self.controller._motors[2].torque_enabled = False
-        centered = self.controller.center_all_encoder_positions(
-            ENCODER_CENTER_CONFIRMATION
-        )
+        centered = self.controller.center_all_encoder_positions(ENCODER_CENTER_CONFIRMATION)
         self.assertTrue(all(motor["position"] == 2048 for motor in centered["motors"]))
-        self.assertTrue(
-            all(motor["target_position"] == 2048 for motor in centered["motors"])
-        )
-        self.assertTrue(
-            all(not motor["torque_enabled"] for motor in centered["motors"])
-        )
+        self.assertTrue(all(motor["target_position"] == 2048 for motor in centered["motors"]))
+        self.assertTrue(all(not motor["torque_enabled"] for motor in centered["motors"]))
 
     def test_capture_persists_and_can_be_recalled(self) -> None:
         capture = self.controller.capture_position(1, "Bench zero")
@@ -366,9 +423,7 @@ class BenchControllerSimulationTests(unittest.TestCase):
         expected_kgcm = expected_current * 11.0
         self.assertAlmostEqual(known["current_a"], expected_current, places=4)
         self.assertAlmostEqual(known["estimated_torque_kgcm"], expected_kgcm, places=3)
-        self.assertAlmostEqual(
-            known["estimated_torque_nm"], expected_kgcm * KGFCM_TO_NM, places=4
-        )
+        self.assertAlmostEqual(known["estimated_torque_nm"], expected_kgcm * KGFCM_TO_NM, places=4)
         self.assertIsNone(unknown["estimated_torque_kgcm"])
         self.assertIsNone(unknown["estimated_torque_nm"])
 
@@ -385,14 +440,11 @@ class BenchControllerSimulationTests(unittest.TestCase):
 
     def test_bus_persistent_write_preflights_and_updates_every_motor(self) -> None:
         before = {
-            motor["id"]: motor["config"].copy()
-            for motor in self.controller.snapshot()["motors"]
+            motor["id"]: motor["config"].copy() for motor in self.controller.snapshot()["motors"]
         }
         self.controller.set_torque(2, True)
-        with self.assertRaisesRegex(ControlError, "armed ID\(s\): 2"):
-            self.controller.write_all_persistent_config(
-                {"p_gain": 44}, "WRITE_ALL_EEPROM"
-            )
+        with self.assertRaisesRegex(ControlError, r"armed ID\(s\): 2"):
+            self.controller.write_all_persistent_config({"p_gain": 44}, "WRITE_ALL_EEPROM")
         self.assertEqual(
             {motor["id"]: motor["config"] for motor in self.controller.snapshot()["motors"]},
             before,
@@ -402,13 +454,10 @@ class BenchControllerSimulationTests(unittest.TestCase):
         with self.controller._lock:
             self.controller._motors[3].config["max_position"] = 2000
         before_limits = {
-            motor["id"]: motor["config"].copy()
-            for motor in self.controller.snapshot()["motors"]
+            motor["id"]: motor["config"].copy() for motor in self.controller.snapshot()["motors"]
         }
         with self.assertRaisesRegex(ControlError, "ID 3"):
-            self.controller.write_all_persistent_config(
-                {"min_position": 2500}, "WRITE_ALL_EEPROM"
-            )
+            self.controller.write_all_persistent_config({"min_position": 2500}, "WRITE_ALL_EEPROM")
         self.assertEqual(
             {motor["id"]: motor["config"] for motor in self.controller.snapshot()["motors"]},
             before_limits,

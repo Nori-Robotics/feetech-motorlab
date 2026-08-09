@@ -24,8 +24,7 @@ def serial_port_available(device: str) -> bool:
         return True
     normalized = os.path.normcase(device)
     return any(
-        os.path.normcase(str(getattr(port, "device", ""))) == normalized
-        for port in _listed_ports()
+        os.path.normcase(str(getattr(port, "device", ""))) == normalized for port in _listed_ports()
     )
 
 
@@ -34,10 +33,15 @@ def _is_placeholder_linux_uart(port: Any) -> bool:
     device = str(getattr(port, "device", ""))
     description = str(getattr(port, "description", "") or "").strip().lower()
     hwid = str(getattr(port, "hwid", "") or "").strip().lower()
-    return bool(re.fullmatch(r"/dev/ttyS\d+", device)) and description in {
-        "",
-        "n/a",
-    } and hwid in {"", "n/a"}
+    return (
+        bool(re.fullmatch(r"/dev/ttyS\d+", device))
+        and description
+        in {
+            "",
+            "n/a",
+        }
+        and hwid in {"", "n/a"}
+    )
 
 
 def discover_serial_ports() -> list[dict[str, Any]]:

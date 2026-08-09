@@ -1,17 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .controller import BenchController, ControlError, DEFAULT_BAUDRATE, ROOT
+from . import __version__
+from .controller import DEFAULT_BAUDRATE, ROOT, BenchController, ControlError
 from .id_station import IdStation, IdStationConfig, IdStationError
+
+LOGGER = logging.getLogger(__name__)
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; base-uri 'none'; connect-src 'self' ws: wss:; "
+        "font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; "
+        "object-src 'none'; script-src 'self'; style-src 'self'"
+    ),
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+}
+SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def websocket_origin_matches_host(origin: str | None, host: str | None) -> bool:
+    """Allow browser WebSockets only from the page that served MotorLab."""
+    if origin is None:
+        return True
+    if not host:
+        return False
+    parsed = urlsplit(origin)
+    return parsed.scheme in {"http", "https"} and parsed.netloc.casefold() == host.casefold()
 
 
 class ConnectionRequest(BaseModel):
@@ -107,13 +136,33 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
         await asyncio.to_thread(controller.close)
 
     app = FastAPI(
-        title="Feetech MotorLab",
-        version="0.1.0",
-        description="Internal STS3215, STS3250, and STS3095 characterization bench.",
+        title="NORI MotorLab",
+        version=__version__,
+        description="Browser-based workspace for STS3215, STS3250, and STS3095 servos.",
         lifespan=lifespan,
+        docs_url=None,
+        openapi_url="/api/openapi.json",
+        redoc_url=None,
     )
     app.state.controller = controller
     app.state.id_station = id_station
+
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        if (
+            request.url.path.startswith("/api/")
+            and request.method not in SAFE_HTTP_METHODS
+            and request.headers.get("x-motorlab-request") != "1"
+        ):
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": "State-changing requests require the MotorLab request header"},
+            )
+        else:
+            response = await call_next(request)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
 
     def combined_snapshot() -> dict[str, Any]:
         snapshot = controller.snapshot()
@@ -127,7 +176,11 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
         except ControlError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+            LOGGER.exception("Controller method %s failed", method)
+            raise HTTPException(
+                status_code=500,
+                detail="Controller operation failed; see the server log for details",
+            ) from exc
 
     async def call_id_station(method: str, *args: Any, **kwargs: Any):
         try:
@@ -136,7 +189,11 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
         except IdStationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+            LOGGER.exception("ID station method %s failed", method)
+            raise HTTPException(
+                status_code=500,
+                detail="ID station operation failed; see the server log for details",
+            ) from exc
 
     @app.get("/api/bootstrap")
     async def bootstrap():
@@ -161,13 +218,17 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
     @app.post("/api/scan")
     async def scan(request: ConnectionRequest):
         if id_station.active:
-            raise HTTPException(status_code=400, detail="Stop the ID station before scanning the normal bus")
+            raise HTTPException(
+                status_code=400, detail="Stop the ID station before scanning the normal bus"
+            )
         return await call("scan", request.port, request.baudrate)
 
     @app.post("/api/connect")
     async def connect(request: ConnectionRequest):
         if id_station.active:
-            raise HTTPException(status_code=400, detail="Stop the ID station before connecting the normal bus")
+            raise HTTPException(
+                status_code=400, detail="Stop the ID station before connecting the normal bus"
+            )
         return await call("connect", request.port, request.baudrate)
 
     @app.post("/api/disconnect")
@@ -250,9 +311,7 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
 
     @app.post("/api/group/persistent-config")
     async def group_persistent_config(request: PersistentConfigRequest):
-        return await call(
-            "write_all_persistent_config", request.values, request.confirmation
-        )
+        return await call("write_all_persistent_config", request.values, request.confirmation)
 
     @app.post("/api/motors/{motor_id}/mode")
     async def set_operating_mode(motor_id: int, request: ModeRequest):
@@ -303,15 +362,11 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
 
     @app.post("/api/motors/{motor_id}/center-encoder")
     async def center_motor_encoder(motor_id: int, request: EncoderCenterRequest):
-        return await call(
-            "center_encoder_position", motor_id, request.confirmation
-        )
+        return await call("center_encoder_position", motor_id, request.confirmation)
 
     @app.post("/api/motors/{motor_id}/persistent-config")
     async def persistent_config(motor_id: int, request: PersistentConfigRequest):
-        return await call(
-            "write_persistent_config", motor_id, request.values, request.confirmation
-        )
+        return await call("write_persistent_config", motor_id, request.values, request.confirmation)
 
     @app.post("/api/motors/{motor_id}/captures")
     async def capture_position(motor_id: int, request: CaptureRequest):
@@ -348,6 +403,11 @@ def create_app(*, simulation: bool = False, data_dir: Path | None = None) -> Fas
 
     @app.websocket("/ws")
     async def websocket_state(websocket: WebSocket):
+        if not websocket_origin_matches_host(
+            websocket.headers.get("origin"), websocket.headers.get("host")
+        ):
+            await websocket.close(code=1008, reason="WebSocket origin does not match Host")
+            return
         await websocket.accept()
         try:
             while True:

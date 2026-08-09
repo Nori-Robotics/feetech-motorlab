@@ -16,6 +16,7 @@ let groupConfigPending = false;
 let lastBusRenderAt = 0;
 let lastMotorListSignature = "";
 let lastGroupConfigBusSignature = "";
+let lastPortsSignature = "";
 let idStationEventSignature = "";
 const currentPeaks = new Map();
 const history = [];
@@ -24,6 +25,10 @@ const controlDrafts = new Map();
 const groupConfigDirty = new Set();
 const THEME_STORAGE_KEY = "nori-motorlab-theme";
 const CONFIRMATION_STORAGE_KEY = "nori-motorlab-skipped-confirmations";
+const releaseDemoParams = new URLSearchParams(location.search);
+const RELEASE_DEMO_ENABLED = releaseDemoParams.get("release-demo") === "1";
+const RELEASE_DEMO_AUTOPLAY = releaseDemoParams.get("autoplay") !== "0";
+let releaseDemoStarted = false;
 const GROUP_CONFIG_FIELDS = [
   { key: "p_gain", element: "groupConfigP", label: "P gain" },
   { key: "d_gain", element: "groupConfigD", label: "D gain" },
@@ -63,7 +68,7 @@ const CONTROL_MODES = {
 
 const ids = [
   "themeButton", "themeText", "resetConfirmationsButton", "resetConfirmationsText", "brandHome", "recordButton", "recordText", "connectionBadge", "connectionText", "portSelect", "baudSelect",
-  "scanButton", "connectButton", "refreshPorts", "motorCount", "motorList", "busOverviewButton", "welcomeState", "busDashboard", "dashboard",
+  "scanButton", "connectButton", "motorCount", "motorList", "busOverviewButton", "welcomeState", "busDashboard", "dashboard",
   "idStationNavButton", "welcomeIdStationButton", "idStationView", "idStationBackButton", "idStationStatusChip", "idModeSingle", "idModeSequential", "idStationPortSelect", "idStationBaudSelect", "idStationModelSelect", "idSingleFields", "idSequentialFields", "idSingleTarget", "idSequenceStart", "idSequenceEnd", "idSequenceLoop", "idStationStartButton", "idStationPhaseLabel", "idStationTarget", "idStationCompleted", "idStationMessage", "idStationDetected", "idStationSimulationControls", "idSimPlugButton", "idSimUnplugButton", "idStationStopButton", "idStationEventLog",
   "busEstopButton", "busOnlineCount", "busLinkSummary", "busArmedCount", "busMovingCount", "busTotalCurrent", "busTotalTorque",
   "busPeakTemp", "busVoltageRange", "busFaultCount", "busCommCount", "busChainMeta", "busChainNodes", "busUpdatedAt", "busMotorCards", "backToBusButton",
@@ -78,7 +83,8 @@ const ids = [
   "configP", "configD", "configI", "configMinPosition", "configMaxPosition", "configMaxTemp", "configMinVoltage",
   "configMaxVoltage", "writeConfigButton", "specModel", "specTorque", "specCurrent", "specVoltage", "specTemp",
   "safetyDialog", "safetyDialogEyebrow", "safetyDialogTitle", "safetyDialogMessage", "safetyDialogDetails", "safetyDialogDontAsk", "safetyDialogDontAskLabel", "safetyDialogCancel", "safetyDialogConfirm",
-  "toast", "toastMessage", "busyOverlay", "busyText"
+  "toast", "toastMessage", "busyOverlay", "busyText",
+  "releaseDemo", "releaseIntro", "releaseDemoHud", "releaseBeat", "releaseBeatIndex", "releaseBeatTitle", "releaseBeatCopy", "releaseCursor", "releaseOutro"
 ];
 const el = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const skippedConfirmations = loadSkippedConfirmations();
@@ -154,6 +160,9 @@ async function requestConfirmation({ key, eyebrow, title, message, details, conf
 
 async function api(path, options = {}) {
   const request = { method: options.method || "GET", headers: {} };
+  if (!new Set(["GET", "HEAD", "OPTIONS"]).has(request.method.toUpperCase())) {
+    request.headers["X-MotorLab-Request"] = "1";
+  }
   if (options.body !== undefined) {
     request.headers["Content-Type"] = "application/json";
     request.body = JSON.stringify(options.body);
@@ -280,6 +289,7 @@ function installRangeKeypoints() {
       button.textContent = `${fraction * 100}%`;
       button.dataset.rangeTarget = input.id;
       button.dataset.rangeFraction = String(fraction);
+      button.style.setProperty("--range-fraction", `${fraction * 100}%`);
       button.title = `Set ${input.id || "slider"} to ${fraction * 100}%`;
       button.setAttribute("aria-label", button.title);
       button.addEventListener("click", () => {
@@ -313,18 +323,33 @@ function renderTorqueLimitOutput(rawLimit, motor = selectedMotor()) {
 }
 
 function renderPorts() {
-  const current = el.portSelect.value;
-  const idStationCurrent = el.idStationPortSelect.value;
-  if (!ports.length) {
+  const current = el.portSelect.value || state?.port || "";
+  const idStationCurrent = el.idStationPortSelect.value || state?.id_station?.config?.port || "";
+  const visiblePorts = [...ports];
+  [current, idStationCurrent].filter(Boolean).forEach((device) => {
+    if (!visiblePorts.some((port) => port.device === device)) {
+      visiblePorts.unshift({ device, label: "Active adapter" });
+    }
+  });
+  if (!visiblePorts.length) {
     el.portSelect.innerHTML = '<option value="">No USB serial adapter detected</option>';
     el.idStationPortSelect.innerHTML = '<option value="">No USB serial adapter detected</option>';
     return;
   }
-  const options = ports.map((port) => `<option value="${escapeHtml(port.device)}">${escapeHtml(port.label)} — ${escapeHtml(port.device)}</option>`).join("");
+  const options = visiblePorts.map((port) => `<option value="${escapeHtml(port.device)}">${escapeHtml(port.label)} — ${escapeHtml(port.device)}</option>`).join("");
   el.portSelect.innerHTML = options;
   el.idStationPortSelect.innerHTML = options;
-  if (ports.some((port) => port.device === current)) el.portSelect.value = current;
-  if (ports.some((port) => port.device === idStationCurrent)) el.idStationPortSelect.value = idStationCurrent;
+  if (visiblePorts.some((port) => port.device === current)) el.portSelect.value = current;
+  if (visiblePorts.some((port) => port.device === idStationCurrent)) el.idStationPortSelect.value = idStationCurrent;
+}
+
+function acceptPorts(nextPorts) {
+  if (!Array.isArray(nextPorts)) return;
+  const signature = JSON.stringify(nextPorts.map((port) => [port.device, port.label, port.real_device]));
+  if (signature === lastPortsSignature) return;
+  lastPortsSignature = signature;
+  ports = nextPorts;
+  renderPorts();
 }
 
 function renderConnection() {
@@ -332,8 +357,11 @@ function renderConnection() {
   const stationActive = Boolean(state?.id_station?.active);
   el.connectionBadge.classList.toggle("online", connected && state.mode === "hardware");
   el.connectionBadge.classList.toggle("simulation", connected && state.mode === "simulation");
-  el.connectionBadge.classList.toggle("offline", !connected);
-  el.connectionText.textContent = connected ? (state.mode === "simulation" ? "SIMULATION" : "BUS ONLINE") : "OFFLINE";
+  el.connectionBadge.classList.toggle("id-station", !connected && stationActive);
+  el.connectionBadge.classList.toggle("offline", !connected && !stationActive);
+  el.connectionText.textContent = connected
+    ? (state.mode === "simulation" ? "SIMULATION" : "BUS ONLINE")
+    : stationActive ? "ID STATION" : "OFFLINE";
   el.connectButton.textContent = connected ? "DISCONNECT BUS" : stationActive ? "ID STATION ACTIVE" : "CONNECT BUS";
   el.connectButton.disabled = stationActive;
   el.scanButton.disabled = connected || stationActive || !el.portSelect.value;
@@ -366,7 +394,7 @@ function renderMotors() {
     <button class="motor-item ${activeView === "motor" && motor.selected ? "active" : ""}" data-motor-id="${motor.id}" type="button">
       <span class="motor-id">${String(motor.id).padStart(2, "0")}</span>
       <span class="motor-copy"><strong>${escapeHtml(motor.model)}</strong><small>${escapeHtml(motor.variant)}</small></span>
-      <span class="motor-state"><i style="background:${motor.online ? "var(--green)" : "var(--danger)"}"></i><small>${motor.torque_enabled ? "ARMED" : "FREE"}</small></span>
+      <span class="motor-state"><i class="${motor.online ? "motor-online" : "motor-offline"}"></i><small>${motor.torque_enabled ? "ARMED" : "FREE"}</small></span>
     </button>`).join("");
   $$(".motor-item").forEach((button) => button.addEventListener("click", () => selectMotor(Number(button.dataset.motorId))));
 }
@@ -868,15 +896,6 @@ function drawSeries(ctx, width, height, values, min, max, color, lineWidth, dash
   ctx.setLineDash([]);
 }
 
-async function refreshPorts() {
-  try {
-    ports = await api("/api/ports");
-    renderPorts();
-    renderConnection();
-    if (!ports.length) toast("No serial adapter detected. Connect a compatible adapter and refresh.", "warning");
-  } catch (error) { handleError(error); }
-}
-
 async function scanBus() {
   if (!el.portSelect.value) return toast("Select a serial adapter first", "warning");
   setBusy(true, "SCANNING — READ ONLY");
@@ -1282,7 +1301,7 @@ async function startIdStation() {
     details: [
       "Keep exactly one motor physically connected to this adapter at a time.",
       "Two matching scans are required; multiple responders, unstable scans, unsupported models, and model mismatches are rejected without writing.",
-      "LeRobot setup_motor disables torque, writes the ID and default 1,000,000 baud, then MotorLab verifies with a ping and final scan.",
+      "MotorLab disables torque, writes the ID and default 1,000,000 baud, then verifies with a ping and final scan.",
       "After verification, no next motor is accepted until the programmed motor has been unplugged."
     ],
     confirmLabel: "START AUTOMATIC ID WRITES",
@@ -1524,7 +1543,6 @@ function bindControls() {
   el.safetyDialog.addEventListener("click", (event) => {
     if (event.target === el.safetyDialog) el.safetyDialog.close("cancel");
   });
-  el.refreshPorts.addEventListener("click", refreshPorts);
   el.brandHome.addEventListener("click", (event) => { event.preventDefault(); showBusDashboard(); });
   el.busOverviewButton.addEventListener("click", () => showBusDashboard());
   el.idStationNavButton.addEventListener("click", () => showIdStation());
@@ -1695,6 +1713,7 @@ function connectSocket() {
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("message", (event) => {
     state = JSON.parse(event.data);
+    acceptPorts(state.ports);
     render();
   });
   socket.addEventListener("close", () => setTimeout(connectSocket, 1200));
@@ -1709,6 +1728,236 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
+function releaseSleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function setReleaseBeat(index, title, copy) {
+  el.releaseBeat.classList.remove("show");
+  setTimeout(() => {
+    el.releaseBeatIndex.textContent = index;
+    el.releaseBeatTitle.textContent = title;
+    el.releaseBeatCopy.textContent = copy;
+    el.releaseBeat.classList.add("show");
+  }, 130);
+}
+
+function moveReleaseCursor(target, xFraction = .5, yFraction = .5) {
+  const node = typeof target === "string" ? document.querySelector(target) : target;
+  if (!node) return;
+  const bounds = node.getBoundingClientRect();
+  el.releaseCursor.style.left = `${bounds.left + bounds.width * xFraction}px`;
+  el.releaseCursor.style.top = `${bounds.top + bounds.height * yFraction}px`;
+  el.releaseCursor.classList.add("visible");
+}
+
+function clickReleaseCursor() {
+  el.releaseCursor.classList.remove("click");
+  void el.releaseCursor.offsetWidth;
+  el.releaseCursor.classList.add("click");
+}
+
+function highlightReleaseElement(target) {
+  $$(".release-demo-highlight").forEach((node) => node.classList.remove("release-demo-highlight"));
+  const node = typeof target === "string" ? document.querySelector(target) : target;
+  if (node) node.classList.add("release-demo-highlight");
+}
+
+function animateReleaseRange(input, target, duration = 650) {
+  const start = Number(input.value);
+  const started = performance.now();
+  return new Promise((resolve) => {
+    const frame = (now) => {
+      const progress = Math.min(1, (now - started) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      input.value = Math.round(start + (target - start) * eased);
+      if (input === el.groupTargetSlider) el.groupTargetInput.value = input.value;
+      updateRange(input);
+      if (progress < 1) requestAnimationFrame(frame);
+      else resolve();
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
+async function releaseGroupPosition(position) {
+  state = await api("/api/group/position", {
+    method: "POST",
+    body: { position, velocity: 2600, acceleration: 140, torque_limit: 560 }
+  });
+  lastBusRenderAt = 0;
+  render();
+}
+
+async function waitForReleaseIdStation(predicate, timeout = 5000) {
+  const deadline = performance.now() + timeout;
+  while (performance.now() < deadline) {
+    const station = await api("/api/id-station/status");
+    state.id_station = station;
+    render();
+    if (predicate(station)) return station;
+    await releaseSleep(90);
+  }
+  throw new Error("Timed out waiting for the simulated ID station");
+}
+
+async function prepareReleaseDemo() {
+  if (!RELEASE_DEMO_ENABLED) return;
+  document.body.classList.add("release-demo-enabled");
+  setTheme("dark");
+  el.releaseIntro.classList.add("ready");
+  window.__releaseDemoDone = false;
+  window.__releaseDemoReady = true;
+  if (RELEASE_DEMO_AUTOPLAY) await runReleaseDemo();
+}
+
+async function runReleaseDemo() {
+  if (releaseDemoStarted || !RELEASE_DEMO_ENABLED) return;
+  releaseDemoStarted = true;
+  window.__releaseDemoDone = false;
+  document.body.classList.add("release-demo-running");
+  el.releaseIntro.classList.add("playing");
+
+  try {
+    if (state?.mode !== "simulation" || !state?.connected) {
+      throw new Error("The release demo is locked to the simulated bus");
+    }
+
+    showBusDashboard(false);
+    state = await api("/api/emergency-stop", { method: "POST" });
+    state = await api("/api/group/torque", { method: "POST", body: { enabled: true } });
+    await releaseGroupPosition(2048);
+    await releaseSleep(900);
+    state = await api("/api/group/torque", { method: "POST", body: { enabled: false } });
+    render();
+
+    await releaseSleep(950);
+    el.releaseIntro.classList.add("exit");
+    await releaseSleep(700);
+    el.releaseDemoHud.classList.add("show");
+    setReleaseBeat("01 / BUS", "Every motor. One view.", "Live health, power, motion, and effort across the full chain.");
+    highlightReleaseElement(".bus-summary-grid");
+    await releaseSleep(1150);
+
+    setReleaseBeat("02 / ARM", "Safe by default.", "Torque starts released. Arm the entire chain with zero-motion seeds.");
+    moveReleaseCursor(el.groupTorqueButton, .55, .5);
+    highlightReleaseElement(".group-control-card");
+    await releaseSleep(650);
+    clickReleaseCursor();
+    state = await api("/api/group/torque", { method: "POST", body: { enabled: true } });
+    lastBusRenderAt = 0;
+    render();
+    await releaseSleep(850);
+
+    setReleaseBeat("03 / MOVE", "One command. Perfect sync.", "Shared targets and limits keep the full bus moving together.");
+    moveReleaseCursor(el.groupTargetSlider, .25, .5);
+    highlightReleaseElement(".group-target-control");
+    await animateReleaseRange(el.groupTargetSlider, 1024, 620);
+    clickReleaseCursor();
+    await releaseGroupPosition(1024);
+    await releaseSleep(1450);
+    moveReleaseCursor(el.groupTargetSlider, .78, .5);
+    await animateReleaseRange(el.groupTargetSlider, 3190, 760);
+    clickReleaseCursor();
+    await releaseGroupPosition(3190);
+    highlightReleaseElement(".bus-summary-card.current");
+    await releaseSleep(1500);
+
+    setReleaseBeat("04 / FOCUS", "Go from fleet to signal.", "Open any servo for a live encoder, current, load, and motion trace.");
+    moveReleaseCursor('[data-open-motor="1"]', .5, .5);
+    highlightReleaseElement(".bus-chain-card");
+    await releaseSleep(700);
+    clickReleaseCursor();
+    await selectMotor(1, false);
+    await releaseSleep(800);
+
+    setReleaseBeat("05 / TRACE", "See the motion happen.", "Position, effort, current, and estimated torque update in real time.");
+    highlightReleaseElement(".metric-grid");
+    moveReleaseCursor(el.positionDial, .72, .35);
+    await api("/api/motors/1/position", {
+      method: "POST",
+      body: { position: 760, velocity: 2200, acceleration: 120, torque_limit: 520 }
+    });
+    await releaseSleep(1300);
+    await api("/api/motors/1/position", {
+      method: "POST",
+      body: { position: 2760, velocity: 2200, acceleration: 120, torque_limit: 520 }
+    });
+    highlightReleaseElement(".chart-card");
+    moveReleaseCursor(el.traceChart, .7, .55);
+    await releaseSleep(1650);
+
+    setReleaseBeat("06 / ID", "Assign motor IDs, safely.", "The normal bus disconnects before MotorLab takes exclusive control of the adapter.");
+    highlightReleaseElement(".connection-panel");
+    moveReleaseCursor(el.connectButton, .5, .5);
+    await releaseSleep(550);
+    clickReleaseCursor();
+    state = await api("/api/emergency-stop", { method: "POST" });
+    state = await api("/api/disconnect", { method: "POST" });
+    render();
+    moveReleaseCursor(el.idStationNavButton, .5, .5);
+    await releaseSleep(550);
+    clickReleaseCursor();
+    showIdStation(false);
+    await releaseSleep(500);
+    const station = await api("/api/id-station/start", {
+      method: "POST",
+      body: {
+        mode: "single", port: "SIMULATED_FEETECH_BUS", baudrate: 1000000,
+        model: "auto", target_id: 7, start_id: 1, end_id: 7, loop: false,
+        confirmation: "START_ID_STATION"
+      }
+    });
+    state.id_station = station;
+    idStationEventSignature = "";
+    render();
+    highlightReleaseElement(".id-target-display");
+    await releaseSleep(750);
+
+    setReleaseBeat("07 / PLUG", "One motor. Two stable scans.", "MotorLab rejects multiple responders and never writes until discovery is stable.");
+    moveReleaseCursor(el.idSimPlugButton, .5, .5);
+    await releaseSleep(550);
+    clickReleaseCursor();
+    state.id_station = await api("/api/id-station/simulate-motor", {
+      method: "POST", body: { present: true, motor_id: 1, model_number: 777 }
+    });
+    render();
+    await waitForReleaseIdStation((value) => value.phase === "confirming");
+    highlightReleaseElement("#idStationDetected");
+    await waitForReleaseIdStation((value) => value.phase === "wait_unplug" && value.completed === 1);
+
+    setReleaseBeat("08 / VERIFIED", "ID 01 → 07. Read back.", "Torque off, new-ID ping, and a final exclusive scan complete the guarded write.");
+    highlightReleaseElement(".id-station-live");
+    await releaseSleep(1500);
+    moveReleaseCursor(el.idSimUnplugButton, .5, .5);
+    clickReleaseCursor();
+    state.id_station = await api("/api/id-station/simulate-motor", {
+      method: "POST", body: { present: false, motor_id: 7, model_number: 777 }
+    });
+    render();
+    await waitForReleaseIdStation((value) => value.phase === "waiting" && value.completed === 1);
+    highlightReleaseElement(".id-station-log");
+    await releaseSleep(900);
+    state.id_station = await api("/api/id-station/stop", { method: "POST" });
+    render();
+
+    $$(".release-demo-highlight").forEach((node) => node.classList.remove("release-demo-highlight"));
+    el.releaseCursor.classList.remove("visible");
+    el.releaseDemoHud.classList.remove("show");
+    el.releaseOutro.classList.add("show");
+    await releaseSleep(2600);
+    window.__releaseDemoDone = true;
+  } catch (error) {
+    console.error(error);
+    el.releaseIntro.classList.add("exit");
+    el.releaseOutro.classList.add("show");
+    window.__releaseDemoError = error.message || String(error);
+    window.__releaseDemoDone = true;
+  }
+}
+
+window.startReleaseDemo = runReleaseDemo;
+
 async function initialize() {
   setTheme(document.documentElement.dataset.theme);
   updateConfirmationPreferenceControl();
@@ -1717,12 +1966,12 @@ async function initialize() {
   try {
     const bootstrap = await api("/api/bootstrap");
     state = bootstrap.state;
-    ports = bootstrap.ports;
+    acceptPorts(bootstrap.ports);
     profiles = bootstrap.profiles;
-    renderPorts();
     if (!location.hash) window.history.replaceState(null, "", "#bus");
     await applyRoute();
     connectSocket();
+    await prepareReleaseDemo();
   } catch (error) { handleError(error); }
 }
 

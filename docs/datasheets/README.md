@@ -23,7 +23,7 @@ STS3095 product page or model-specific PDF. MotorLab therefore supports model
 number `2569` through Feetech's shared SMS/STS control table, but deliberately
 does not display unverified STS3095 torque, current, or temperature limits.
 
-The register map comes from the SMS/STS table linked by LeRobot to Feetech's
+The register map comes from Feetech's SMS/STS
 [official e-manual](http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0).
 Feetech's STS3215 technical overview documents operating modes `0–3` and the
 shared STS current-feedback unit as

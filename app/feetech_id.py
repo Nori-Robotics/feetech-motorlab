@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
-
+from typing import Any
 
 DEFAULT_BAUDRATE = 1_000_000
 MIN_MOTOR_ID = 1
@@ -14,18 +14,16 @@ MOTOR_NAME = "motor"
 class MotorProfile:
     name: str
     model_number: int
-    lerobot_model: str
+    bus_model: str
 
 
 MOTOR_PROFILES = {
     "sts3215": MotorProfile("sts3215", 777, "sts3215"),
-    # STS3095 uses the standard STS control table in LeRobot.
+    # STS3095 uses the standard SMS/STS control table.
     "sts3095": MotorProfile("sts3095", 2569, "sts_series"),
     "sts3250": MotorProfile("sts3250", 2825, "sts3250"),
 }
-MODEL_NUMBER_TO_PROFILE = {
-    profile.model_number: profile for profile in MOTOR_PROFILES.values()
-}
+MODEL_NUMBER_TO_PROFILE = {profile.model_number: profile for profile in MOTOR_PROFILES.values()}
 
 
 @dataclass(frozen=True)
@@ -47,11 +45,11 @@ class TargetPlan:
     loop: bool = False
 
     @classmethod
-    def single(cls, target_id: int) -> "TargetPlan":
+    def single(cls, target_id: int) -> TargetPlan:
         return cls("single", target_id, target_id, target_id, True)
 
     @classmethod
-    def sequential(cls, start: int, end: int, loop: bool) -> "TargetPlan":
+    def sequential(cls, start: int, end: int, loop: bool) -> TargetPlan:
         return cls("sequential", start, start, end, loop)
 
     @property
@@ -123,9 +121,7 @@ def require_one_supported_response(
     response = responses[0]
     profile = MODEL_NUMBER_TO_PROFILE.get(response.model_number)
     if profile is None:
-        raise RuntimeError(
-            f"unsupported model number {response.model_number}; no write issued"
-        )
+        raise RuntimeError(f"unsupported model number {response.model_number}; no write issued")
     if requested_model != "auto" and profile.name != requested_model:
         raise RuntimeError(
             f"expected {requested_model.upper()}, found {profile.name.upper()}; no write issued"
@@ -139,7 +135,7 @@ def verify_ping(api: FeetechApi, response: Response, profile: MotorProfile) -> N
         motors={
             MOTOR_NAME: api.motor_type(
                 id=response.motor_id,
-                model=profile.lerobot_model,
+                model=profile.bus_model,
                 norm_mode=api.norm_mode_type.RANGE_M100_100,
             )
         },
@@ -167,7 +163,7 @@ def write_id(
         motors={
             MOTOR_NAME: api.motor_type(
                 id=target_id,
-                model=profile.lerobot_model,
+                model=profile.bus_model,
                 norm_mode=api.norm_mode_type.RANGE_M100_100,
             )
         },

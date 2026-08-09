@@ -43,9 +43,7 @@ class IdStationSimulationTests(unittest.TestCase):
             "loop": False,
         }
         values.update(overrides)
-        return self.station.start(
-            IdStationConfig(**values), ID_STATION_CONFIRMATION
-        )
+        return self.station.start(IdStationConfig(**values), ID_STATION_CONFIRMATION)
 
     def test_single_mode_repeats_after_verified_unplug(self) -> None:
         self.start(target_id=5)

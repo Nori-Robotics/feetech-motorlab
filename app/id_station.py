@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import threading
-import time
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .feetech_bus import FeetechMotorsBus, Motor, MotorNormMode
 from .feetech_id import (
     DEFAULT_BAUDRATE,
     FeetechApi,
@@ -18,7 +18,6 @@ from .feetech_id import (
     validate_motor_id,
 )
 from .serial_ports import serial_port_available
-
 
 ID_STATION_CONFIRMATION = "START_ID_STATION"
 SUPPORTED_MODELS = {"auto", "sts3215", "sts3095", "sts3250"}
@@ -99,9 +98,7 @@ class IdStation:
 
     def start(self, config: IdStationConfig, confirmation: str) -> dict[str, Any]:
         if confirmation != ID_STATION_CONFIRMATION:
-            raise IdStationError(
-                f"Starting the ID station requires {ID_STATION_CONFIRMATION}"
-            )
+            raise IdStationError(f"Starting the ID station requires {ID_STATION_CONFIRMATION}")
         config = self._validate_config(config)
         api = self._load_api() if not self.simulation else None
         with self._lock:
@@ -170,9 +167,7 @@ class IdStation:
                     int(motor_id),
                     int(model_number),
                 )
-                self._add_event_locked(
-                    "info", f"Simulated motor plugged in at ID {motor_id}."
-                )
+                self._add_event_locked("info", f"Simulated motor plugged in at ID {motor_id}.")
             else:
                 self._sim_motor = None
                 self._add_event_locked("info", "Simulated motor unplugged.")
@@ -210,13 +205,6 @@ class IdStation:
 
     @staticmethod
     def _load_api() -> FeetechApi:
-        try:
-            from lerobot.motors.feetech import FeetechMotorsBus
-            from lerobot.motors.motors_bus import Motor, MotorNormMode
-        except Exception as exc:
-            raise IdStationError(
-                "LeRobot Feetech support is unavailable in this server environment"
-            ) from exc
         return FeetechApi(FeetechMotorsBus, Motor, MotorNormMode)
 
     def _scan(self, baudrate: int) -> list[Response]:
@@ -227,9 +215,7 @@ class IdStation:
             port = self._config.port
         return scan_once(api, port, baudrate)
 
-    def _program(
-        self, response: Response, profile: Any, target_id: int
-    ) -> Response:
+    def _program(self, response: Response, profile: Any, target_id: int) -> Response:
         if self.simulation:
             verified = Response(
                 response.port,
@@ -257,15 +243,11 @@ class IdStation:
                 plan = self._plan
                 try:
                     responses = self._scan(config.baudrate)
-                    response, profile = require_one_supported_response(
-                        responses, config.model
-                    )
+                    response, profile = require_one_supported_response(responses, config.model)
                 except RuntimeError as exc:
                     stable_key = None
                     stable_count = 0
-                    self._set_waiting_message(
-                        f"Waiting for one supported motor: {exc}"
-                    )
+                    self._set_waiting_message(f"Waiting for one supported motor: {exc}")
                     self._stop.wait(self.poll_interval)
                     continue
                 except Exception as exc:
@@ -321,25 +303,19 @@ class IdStation:
                     with self._lock:
                         self._phase = "complete"
                         self._active = False
-                        self._message = (
-                            f"Sequence complete: IDs {plan.start}–{plan.end} verified."
-                        )
+                        self._message = f"Sequence complete: IDs {plan.start}–{plan.end} verified."
                         self._add_event_locked("success", self._message)
                     return
 
                 with self._lock:
                     self._phase = "wait_unplug"
-                    self._message = (
-                        f"ID {verified.motor_id} verified. Unplug it before target ID {plan.target}."
-                    )
+                    self._message = f"ID {verified.motor_id} verified. Unplug it before target ID {plan.target}."
                 empty_scans = 0
                 while not self._stop.is_set() and empty_scans < self.unplug_scans:
                     try:
                         present = self._scan(verified.baudrate)
                     except Exception as exc:
-                        raise IdStationError(
-                            f"Unplug check failed: {self._compact(exc)}"
-                        ) from exc
+                        raise IdStationError(f"Unplug check failed: {self._compact(exc)}") from exc
                     empty_scans = 0 if present else empty_scans + 1
                     if empty_scans < self.unplug_scans:
                         self._stop.wait(self.poll_interval)

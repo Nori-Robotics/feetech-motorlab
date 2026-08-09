@@ -4,19 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0e11">
-  <script>
-    (() => {
-      try {
-        const savedTheme = localStorage.getItem("nori-motorlab-theme");
-        if (savedTheme === "light" || savedTheme === "dark") {
-          document.documentElement.dataset.theme = savedTheme;
-          document.querySelector('meta[name="theme-color"]').content = savedTheme === "dark" ? "#0b0e11" : "#fbfaf5";
-        }
-      } catch (_) {}
-    })();
-  </script>
-  <title>NORI MotorLab · Feetech Characterization</title>
-  <link rel="stylesheet" href="/styles.css?v=20260807-web-id-station">
+  <script src="/theme.js?v=20260809"></script>
+  <title>NORI MotorLab</title>
+  <link rel="stylesheet" href="/styles.css?v=20260809-id-demo-2">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -26,11 +16,10 @@
     <a id="brandHome" class="brand" href="#bus" aria-label="Open the bus dashboard">
       <img class="brand-mark" src="/nori-mark.png" alt="">
       <span class="brand-name">nori</span>
-      <span class="brand-chip">SERVO LAB</span>
+      <span class="brand-chip">MOTORLAB</span>
     </a>
-    <div class="topbar-center">
-      <span class="eyebrow">// SERVO BENCH TOOL</span>
-      <span>FEETECH / CHARACTERIZATION</span>
+    <div class="topbar-center" aria-label="MotorLab capabilities">
+      <span>MOTION</span><i></i><span>TELEMETRY</span><i></i><span>CONFIGURATION</span>
     </div>
     <div class="topbar-actions">
       <button id="themeButton" class="theme-button" type="button" aria-label="Switch to light mode" aria-pressed="true" title="Switch to light mode">
@@ -56,9 +45,7 @@
       <section class="connection-panel">
         <div class="section-heading">
           <div><span class="section-index">01</span><h2>BUS LINK</h2></div>
-          <button id="refreshPorts" class="icon-button" type="button" title="Refresh serial ports" aria-label="Refresh serial ports">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
-          </button>
+          <span class="auto-discovery-badge" title="Serial adapters update automatically"><i></i>AUTO</span>
         </div>
         <label class="field-label" for="portSelect">SERIAL ADAPTER</label>
         <div class="select-wrap">
@@ -127,9 +114,9 @@
           <div class="orbital orbital-1"></div><div class="orbital orbital-2"></div>
           <img class="welcome-mark" src="/nori-mark.png" alt="">
         </div>
-        <p class="kicker">// NORI SERVO LAB</p>
+        <p class="kicker">// BUILD · TUNE · TEST</p>
         <h1>Small servo.<br><span>Big personality.</span></h1>
-        <p class="welcome-copy">A friendly workbench for live feedback, motion tuning, position memories, and repeatable Feetech characterization.</p>
+        <p class="welcome-copy">NORI MotorLab brings live feedback, motion tuning, position memories, and repeatable testing into one Feetech servo workspace.</p>
         <div class="welcome-steps">
           <div><span>1</span><p><strong>POWER</strong>Use a current-limited supply matched to the servo.</p></div>
           <div><span>2</span><p><strong>CONNECT</strong>Attach a compatible half-duplex serial adapter.</p></div>
@@ -192,7 +179,7 @@
               <div class="id-station-count"><span>VERIFIED MOTORS</span><strong id="idStationCompleted">0</strong></div>
               <p id="idStationMessage" class="id-station-message">Configure a session, then start the ID station.</p>
               <div id="idStationDetected" class="id-detected-card empty"><span class="id-detected-icon">?</span><div><strong>NO MOTOR DETECTED</strong><small>Waiting for a session</small></div></div>
-              <div id="idStationSimulationControls" class="id-simulation-controls hidden"><span>SIMULATION TEST CONTROLS</span><div><button id="idSimPlugButton" type="button">PLUG MOTOR</button><button id="idSimUnplugButton" type="button">UNPLUG MOTOR</button></div></div>
+              <div id="idStationSimulationControls" class="id-simulation-controls hidden"><span>SIMULATED MOTOR</span><div><button id="idSimPlugButton" type="button">PLUG MOTOR</button><button id="idSimUnplugButton" type="button">UNPLUG MOTOR</button></div></div>
               <button id="idStationStopButton" class="danger-outline full" type="button" disabled>STOP ID STATION</button>
             </div>
           </article>
@@ -300,7 +287,7 @@
             <p id="headerVariant">ST-3215-C018 · 12 V</p>
           </div>
           <div class="header-actions">
-            <a id="datasheetLink" class="document-link" href="#" target="_blank">
+            <a id="datasheetLink" class="document-link" href="#" target="_blank" rel="noopener noreferrer">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6M8 13h8M8 17h5"/></svg>
               DATASHEET
             </a>
@@ -495,6 +482,54 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"><span class="toast-mark"></span><p id="toastMessage"></p></div>
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><strong id="busyText">CONNECTING</strong></div>
-  <script src="/app.js?v=20260807-web-id-station" defer></script>
+
+  <div id="releaseDemo" class="release-demo" aria-hidden="true">
+    <div class="release-demo-grid"></div>
+    <div class="release-demo-scanline"></div>
+
+    <section id="releaseIntro" class="release-intro">
+      <div class="release-intro-orbit orbit-one"></div>
+      <div class="release-intro-orbit orbit-two"></div>
+      <div class="release-intro-count">NORI / RELEASE 01</div>
+      <div class="release-intro-copy">
+        <div class="release-intro-brand">
+          <img src="/nori-mark.png" alt="">
+          <span>NORI ROBOTICS</span>
+        </div>
+        <p>INTRODUCING</p>
+        <h1>MotorLab<span>.</span></h1>
+        <h2>One workspace for every Feetech servo.</h2>
+        <div class="release-intro-tags"><span>LIVE TELEMETRY</span><span>GROUP MOTION</span><span>GUARDED ID SETUP</span></div>
+      </div>
+      <div class="release-intro-progress"><i></i></div>
+    </section>
+
+    <div id="releaseDemoHud" class="release-demo-hud">
+      <div class="release-hud-corner"><i></i><span>SIMULATION / LIVE</span></div>
+      <div id="releaseBeat" class="release-beat">
+        <span id="releaseBeatIndex">01 / BUS</span>
+        <strong id="releaseBeatTitle">Every motor. One view.</strong>
+        <small id="releaseBeatCopy">Live health, power, motion, and effort across the full chain.</small>
+      </div>
+    </div>
+
+    <div id="releaseCursor" class="release-cursor">
+      <svg viewBox="0 0 30 36" aria-hidden="true"><path d="M3 2.5v27l7.2-7.1 5.5 10.9 5.1-2.7-5.5-10.5 10.2-1.4L3 2.5Z"/></svg>
+      <i></i>
+    </div>
+
+    <section id="releaseOutro" class="release-outro">
+      <div class="release-outro-code">ML / 01</div>
+      <div class="release-outro-top"><img src="/nori-mark.png" alt=""><span>NORI ROBOTICS</span><b>RELEASE 01</b></div>
+      <div class="release-outro-copy">
+        <p>MOTION / TELEMETRY / CONFIGURATION</p>
+        <h1>MotorLab<br>is live<span>.</span></h1>
+        <div class="release-outro-models"><span>STS3215</span><span>STS3250</span><span>STS3095</span></div>
+      </div>
+      <div class="release-outro-footer"><strong>OPEN SOURCE · AVAILABLE NOW</strong><span>BUILD / TUNE / LEARN</span></div>
+    </section>
+  </div>
+
+  <script src="/app.js?v=20260809-id-demo-2" defer></script>
 </body>
 </html>

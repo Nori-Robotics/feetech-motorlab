@@ -1,5 +1,5 @@
 fastapi>=0.115,<1
 uvicorn>=0.32,<1
+websockets>=13,<17
 pyserial>=3.5,<4
-lerobot>=0.3.4,<0.4
-feetech-servo-sdk>=1.0,<2
+feetech-servo-sdk==1.0.0

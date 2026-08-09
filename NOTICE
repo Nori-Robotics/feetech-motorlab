@@ -1,9 +1,13 @@
-Feetech MotorLab
+NORI MotorLab
 Copyright (c) 2026 NORI Robotics contributors
 
 The Feetech datasheets under docs/datasheets/ are manufacturer reference
 documents and are not covered by the repository's MIT License. Their source
 URLs and checksums are recorded in docs/datasheets/README.md.
+
+The bundled Bagel Fat One, Fredoka, and JetBrains Mono webfonts are licensed
+under the SIL Open Font License 1.1. Copyright notices and the license text are
+included in static/fonts/OFL-1.1.txt.
 
 NORI names, marks, and logos remain the property of their respective owner.
 Feetech, Waveshare, and other third-party names and marks belong to their

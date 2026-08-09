@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import math
-import os
 import re
 import threading
 import time
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .feetech_bus import FeetechMotorsBus, Motor, MotorNormMode
 from .serial_ports import discover_serial_ports, serial_port_available
 
-
+LOGGER = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 CAPTURES_FILE = DATA_DIR / "captured_positions.json"
@@ -195,6 +197,9 @@ class BenchController:
     """Thread-safe hardware/simulation controller for one Feetech servo bus."""
 
     poll_interval = 0.08
+    port_scan_interval = 0.75
+    chain_scan_interval = 2.0
+    chain_absence_scans = 2
 
     def __init__(self, *, simulation: bool = False, data_dir: Path = DATA_DIR):
         self.simulation = simulation
@@ -209,6 +214,11 @@ class BenchController:
         self._baudrate = DEFAULT_BAUDRATE
         self._selected_id: int | None = None
         self._motors: dict[int, MotorState] = {}
+        self._ports: list[dict[str, Any]] = self._discover_ports()
+        self._next_port_scan = time.monotonic() + self.port_scan_interval
+        self._next_chain_scan = time.monotonic() + self.chain_scan_interval
+        self._chain_misses: dict[int, int] = {}
+        self._known_unsupported: dict[int, int] = {}
         self._message = "Simulation ready" if simulation else "Connect a serial bus adapter"
         self._message_level = "info"
         self._captures = self._load_captures()
@@ -231,11 +241,18 @@ class BenchController:
         try:
             self.disconnect()
         except Exception:
-            pass
+            LOGGER.debug("Controller cleanup could not complete disconnect", exc_info=True)
         if self._thread.is_alive():
             self._thread.join(timeout=1.0)
 
     def list_ports(self) -> list[dict[str, Any]]:
+        discovered = self._discover_ports()
+        with self._lock:
+            self._ports = discovered
+            self._next_port_scan = time.monotonic() + self.port_scan_interval
+            return deepcopy(self._ports)
+
+    def _discover_ports(self) -> list[dict[str, Any]]:
         if self.simulation:
             return [
                 {
@@ -259,7 +276,10 @@ class BenchController:
         if baudrate not in (19_200, 38_400, 57_600, 115_200, 128_000, 250_000, 500_000, 1_000_000):
             raise ControlError("Unsupported STS baud rate")
         if self.simulation:
-            return [self._motor_description(mid, number) for mid, number in ((1, 777), (2, 2825), (3, 2569))]
+            return [
+                self._motor_description(mid, number)
+                for mid, number in ((1, 777), (2, 2825), (3, 2569))
+            ]
         if not serial_port_available(port):
             raise ControlError(f"Serial port does not exist: {port}")
         with self._lock:
@@ -298,7 +318,9 @@ class BenchController:
                     raise ControlError("No supported STS3215, STS3250, or STS3095 servo responded")
                 FeetechMotorsBus, Motor, MotorNormMode = self._import_feetech()
                 motors = {
-                    self._motor_name(mid): Motor(mid, SUPPORTED_MODELS[number]["sdk_model"], MotorNormMode.DEGREES)
+                    self._motor_name(mid): Motor(
+                        mid, SUPPORTED_MODELS[number]["sdk_model"], MotorNormMode.DEGREES
+                    )
                     for mid, number in found.items()
                 }
                 bus = FeetechMotorsBus(port, motors)
@@ -322,6 +344,9 @@ class BenchController:
             self._motors = {
                 mid: self._new_motor_state(mid, number) for mid, number in sorted(found.items())
             }
+            self._chain_misses = {}
+            self._known_unsupported = {}
+            self._next_chain_scan = time.monotonic() + self.chain_scan_interval
             self._selected_id = next(iter(self._motors), None)
             self._connected = True
 
@@ -357,18 +382,32 @@ class BenchController:
         self._stop_recording_locked()
         if self._bus is not None:
             try:
-                for motor in self._motors.values():
-                    try:
-                        self._bus.write("Torque_Enable", self._motor_name(motor.id), 0, normalize=False, num_retry=1)
-                        motor.torque_enabled = False
-                    except Exception:
-                        pass
-                if getattr(self._bus, "is_connected", False):
-                    self._bus.port_handler.closePort()
+                transaction = getattr(self._bus, "transaction_lock", nullcontext())
+                with transaction:
+                    for motor in self._motors.values():
+                        try:
+                            self._bus.write(
+                                "Torque_Enable",
+                                self._motor_name(motor.id),
+                                0,
+                                normalize=False,
+                                num_retry=1,
+                            )
+                            motor.torque_enabled = False
+                        except Exception:
+                            LOGGER.debug(
+                                "Torque release failed while disconnecting ID %s",
+                                motor.id,
+                                exc_info=True,
+                            )
+                    if getattr(self._bus, "is_connected", False):
+                        self._bus.port_handler.closePort()
             finally:
                 self._bus = None
         self._connected = False
         self._motors = {}
+        self._chain_misses = {}
+        self._known_unsupported = {}
         self._selected_id = None
         self._port = None
         self._set_message("Disconnected safely", "info")
@@ -388,9 +427,7 @@ class BenchController:
             if motor.torque_enabled:
                 raise ControlError("Release torque before changing the operating mode")
             if mode == motor.operating_mode:
-                self._set_message(
-                    f"ID {motor_id} is already in {CONTROL_MODES[mode]} mode", "info"
-                )
+                self._set_message(f"ID {motor_id} is already in {CONTROL_MODES[mode]} mode", "info")
                 return motor.as_dict(selected=motor_id == self._selected_id)
 
             self._refresh_motor_locked(motor)
@@ -408,9 +445,7 @@ class BenchController:
                         self._bus.read("Operating_Mode", name, normalize=False, num_retry=2)
                     )
                     if actual != mode:
-                        raise ControlError(
-                            f"Mode verification failed: wrote {mode}, read {actual}"
-                        )
+                        raise ControlError(f"Mode verification failed: wrote {mode}, read {actual}")
                 finally:
                     self._bus.write("Lock", name, 1, normalize=False, num_retry=2)
 
@@ -473,7 +508,13 @@ class BenchController:
             for motor in self._motors.values():
                 if not self.simulation and self._bus is not None:
                     try:
-                        self._bus.write("Torque_Enable", self._motor_name(motor.id), 0, normalize=False, num_retry=1)
+                        self._bus.write(
+                            "Torque_Enable",
+                            self._motor_name(motor.id),
+                            0,
+                            normalize=False,
+                            num_retry=1,
+                        )
                     except Exception as exc:
                         errors.append(f"ID {motor.id}: {self._compact_error(exc)}")
                 motor.torque_enabled = False
@@ -483,7 +524,9 @@ class BenchController:
                 motor.moving = False
             self._set_message("Emergency stop: torque disabled on all servos", "danger")
             if errors:
-                raise ControlError("Emergency stop sent, but acknowledgements failed: " + "; ".join(errors))
+                raise ControlError(
+                    "Emergency stop sent, but acknowledgements failed: " + "; ".join(errors)
+                )
             return self.snapshot()
 
     def set_all_torque(self, enabled: bool) -> dict[str, Any]:
@@ -493,7 +536,9 @@ class BenchController:
                 raise ControlError("No servo bus is connected")
             enabled = bool(enabled)
             if enabled:
-                incompatible = [motor.id for motor in self._motors.values() if motor.operating_mode != 0]
+                incompatible = [
+                    motor.id for motor in self._motors.values() if motor.operating_mode != 0
+                ]
                 if incompatible:
                     raise ControlError(
                         "Group angle control requires mode 0 on every motor; switch ID(s) "
@@ -512,10 +557,16 @@ class BenchController:
                         try:
                             self.set_torque(motor_id, False)
                         except Exception:
-                            pass
+                            LOGGER.debug(
+                                "Rollback torque release failed for ID %s",
+                                motor_id,
+                                exc_info=True,
+                            )
                     if isinstance(exc, ControlError):
                         raise
-                    raise ControlError(f"Could not arm the full chain: {self._compact_error(exc)}") from exc
+                    raise ControlError(
+                        f"Could not arm the full chain: {self._compact_error(exc)}"
+                    ) from exc
                 self._set_message(
                     f"Armed {len(self._motors)} motors in angle mode with zero-motion seeds",
                     "warning",
@@ -562,7 +613,9 @@ class BenchController:
 
             offline = [motor.id for motor in self._motors.values() if not motor.online]
             unarmed = [motor.id for motor in self._motors.values() if not motor.torque_enabled]
-            incompatible = [motor.id for motor in self._motors.values() if motor.operating_mode != 0]
+            incompatible = [
+                motor.id for motor in self._motors.values() if motor.operating_mode != 0
+            ]
             outside_limits = [
                 motor.id
                 for motor in self._motors.values()
@@ -571,11 +624,18 @@ class BenchController:
                 <= int(motor.config.get("max_position", 4095))
             ]
             if offline:
-                raise ControlError("Group command blocked by offline ID(s): " + ", ".join(map(str, offline)))
+                raise ControlError(
+                    "Group command blocked by offline ID(s): " + ", ".join(map(str, offline))
+                )
             if unarmed:
-                raise ControlError("Arm every motor before a group command; unarmed ID(s): " + ", ".join(map(str, unarmed)))
+                raise ControlError(
+                    "Arm every motor before a group command; unarmed ID(s): "
+                    + ", ".join(map(str, unarmed))
+                )
             if incompatible:
-                raise ControlError("Group position requires mode 0 on ID(s): " + ", ".join(map(str, incompatible)))
+                raise ControlError(
+                    "Group position requires mode 0 on ID(s): " + ", ".join(map(str, incompatible))
+                )
             if outside_limits:
                 raise ControlError(
                     f"Target {position} is outside configured travel for ID(s): "
@@ -586,9 +646,13 @@ class BenchController:
                 # Stage common limits first so no goal positions are sent if setup fails.
                 for motor in self._motors.values():
                     name = self._motor_name(motor.id)
-                    self._bus.write("Acceleration", name, acceleration, normalize=False, num_retry=1)
+                    self._bus.write(
+                        "Acceleration", name, acceleration, normalize=False, num_retry=1
+                    )
                     self._bus.write("Goal_Velocity", name, velocity, normalize=False, num_retry=1)
-                    self._bus.write("Torque_Limit", name, torque_limit, normalize=False, num_retry=1)
+                    self._bus.write(
+                        "Torque_Limit", name, torque_limit, normalize=False, num_retry=1
+                    )
                 for motor in self._motors.values():
                     self._bus.write(
                         "Goal_Position",
@@ -637,15 +701,12 @@ class BenchController:
                 raise ControlError("Group torque limit must be 0–1000")
 
             offline = [motor.id for motor in self._motors.values() if not motor.online]
-            unarmed = [
-                motor.id for motor in self._motors.values() if not motor.torque_enabled
-            ]
+            unarmed = [motor.id for motor in self._motors.values() if not motor.torque_enabled]
             incompatible = [
                 motor.id for motor in self._motors.values() if motor.operating_mode != 0
             ]
             targets = {
-                motor.id: int(motor.target_position) + delta
-                for motor in self._motors.values()
+                motor.id: int(motor.target_position) + delta for motor in self._motors.values()
             }
             outside_limits = [
                 motor.id
@@ -656,8 +717,7 @@ class BenchController:
             ]
             if offline:
                 raise ControlError(
-                    "Group jog blocked by offline ID(s): "
-                    + ", ".join(map(str, offline))
+                    "Group jog blocked by offline ID(s): " + ", ".join(map(str, offline))
                 )
             if unarmed:
                 raise ControlError(
@@ -666,8 +726,7 @@ class BenchController:
                 )
             if incompatible:
                 raise ControlError(
-                    "Group jogging requires mode 0 on ID(s): "
-                    + ", ".join(map(str, incompatible))
+                    "Group jogging requires mode 0 on ID(s): " + ", ".join(map(str, incompatible))
                 )
             if outside_limits:
                 raise ControlError(
@@ -682,9 +741,7 @@ class BenchController:
                     self._bus.write(
                         "Acceleration", name, acceleration, normalize=False, num_retry=1
                     )
-                    self._bus.write(
-                        "Goal_Velocity", name, velocity, normalize=False, num_retry=1
-                    )
+                    self._bus.write("Goal_Velocity", name, velocity, normalize=False, num_retry=1)
                     self._bus.write(
                         "Torque_Limit", name, torque_limit, normalize=False, num_retry=1
                     )
@@ -716,9 +773,7 @@ class BenchController:
             )
             return self.snapshot()
 
-    def center_encoder_position(
-        self, motor_id: int, confirmation: str
-    ) -> dict[str, Any]:
+    def center_encoder_position(self, motor_id: int, confirmation: str) -> dict[str, Any]:
         """Use Feetech's one-key midpoint command and verify 2048 with torque off."""
         with self._lock:
             if confirmation != ENCODER_CENTER_CONFIRMATION:
@@ -773,8 +828,7 @@ class BenchController:
                 readings.append(f"ID {motor.id} {before}→{after}")
 
             self._set_message(
-                "Verified all encoder centers at 2048 with torque off: "
-                + "; ".join(readings),
+                "Verified all encoder centers at 2048 with torque off: " + "; ".join(readings),
                 "success",
             )
             return self.snapshot()
@@ -787,28 +841,17 @@ class BenchController:
                 f"ID {motor.id} must be in angle-servo mode before encoder centering"
             )
         if motor.torque_enabled:
-            raise ControlError(
-                f"Release torque on ID {motor.id} before encoder centering"
-            )
+            raise ControlError(f"Release torque on ID {motor.id} before encoder centering")
         if self.simulation:
             return
 
         name = self._motor_name(motor.id)
         try:
-            torque_state = int(
-                self._bus.read(
-                    "Torque_Enable", name, normalize=False, num_retry=2
-                )
-            )
-            mode = int(
-                self._bus.read(
-                    "Operating_Mode", name, normalize=False, num_retry=2
-                )
-            )
+            torque_state = int(self._bus.read("Torque_Enable", name, normalize=False, num_retry=2))
+            mode = int(self._bus.read("Operating_Mode", name, normalize=False, num_retry=2))
         except Exception as exc:
             raise ControlError(
-                f"Could not verify torque and mode on ID {motor.id}: "
-                f"{self._compact_error(exc)}"
+                f"Could not verify torque and mode on ID {motor.id}: {self._compact_error(exc)}"
             ) from exc
         motor.torque_enabled = torque_state != 0
         motor.operating_mode = mode
@@ -828,41 +871,21 @@ class BenchController:
         else:
             name = self._motor_name(motor.id)
             try:
-                before = int(
-                    self._bus.read(
-                        "Present_Position", name, normalize=False, num_retry=2
-                    )
-                )
+                before = int(self._bus.read("Present_Position", name, normalize=False, num_retry=2))
                 if before != 2048:
                     # Feetech STS one-key midpoint calibration: address 40 value 128.
-                    self._bus.write(
-                        "Torque_Enable", name, 128, normalize=False, num_retry=2
-                    )
+                    self._bus.write("Torque_Enable", name, 128, normalize=False, num_retry=2)
                     time.sleep(0.08)
-                self._bus.write(
-                    "Torque_Enable", name, 0, normalize=False, num_retry=2
-                )
-                after = int(
-                    self._bus.read(
-                        "Present_Position", name, normalize=False, num_retry=2
-                    )
-                )
+                self._bus.write("Torque_Enable", name, 0, normalize=False, num_retry=2)
+                after = int(self._bus.read("Present_Position", name, normalize=False, num_retry=2))
                 torque_state = int(
-                    self._bus.read(
-                        "Torque_Enable", name, normalize=False, num_retry=2
-                    )
+                    self._bus.read("Torque_Enable", name, normalize=False, num_retry=2)
                 )
-                mode = int(
-                    self._bus.read(
-                        "Operating_Mode", name, normalize=False, num_retry=2
-                    )
-                )
+                mode = int(self._bus.read("Operating_Mode", name, normalize=False, num_retry=2))
                 if mode != 0:
                     self._bus.write("Lock", name, 0, normalize=False, num_retry=2)
                     try:
-                        self._bus.write(
-                            "Operating_Mode", name, 0, normalize=False, num_retry=2
-                        )
+                        self._bus.write("Operating_Mode", name, 0, normalize=False, num_retry=2)
                         mode = int(
                             self._bus.read(
                                 "Operating_Mode",
@@ -872,18 +895,12 @@ class BenchController:
                             )
                         )
                     finally:
-                        self._bus.write(
-                            "Lock", name, 1, normalize=False, num_retry=2
-                        )
+                        self._bus.write("Lock", name, 1, normalize=False, num_retry=2)
                 else:
-                    self._bus.write(
-                        "Lock", name, 1, normalize=False, num_retry=2
-                    )
+                    self._bus.write("Lock", name, 1, normalize=False, num_retry=2)
             except Exception as exc:
                 try:
-                    self._bus.write(
-                        "Torque_Enable", name, 0, normalize=False, num_retry=2
-                    )
+                    self._bus.write("Torque_Enable", name, 0, normalize=False, num_retry=2)
                 except Exception as stop_exc:
                     motor.torque_enabled = True
                     raise ControlError(
@@ -902,9 +919,7 @@ class BenchController:
                 )
             if mode != 0:
                 motor.operating_mode = mode
-                raise ControlError(
-                    f"ID {motor.id} centered but operating mode changed to {mode}"
-                )
+                raise ControlError(f"ID {motor.id} centered but operating mode changed to {mode}")
             if after != 2048:
                 raise ControlError(
                     f"ID {motor.id} center verification failed: expected 2048, read {after}"
@@ -939,7 +954,9 @@ class BenchController:
             config_max = int(motor.config.get("max_position", 4095))
             position = int(position)
             if not config_min <= position <= config_max:
-                raise ControlError(f"Position must be inside configured limits {config_min}–{config_max}")
+                raise ControlError(
+                    f"Position must be inside configured limits {config_min}–{config_max}"
+                )
             velocity = motor.velocity_limit if velocity is None else int(velocity)
             acceleration = motor.acceleration if acceleration is None else int(acceleration)
             torque_limit = motor.torque_limit if torque_limit is None else int(torque_limit)
@@ -960,7 +977,9 @@ class BenchController:
             motor.velocity_limit = velocity
             motor.acceleration = acceleration
             motor.torque_limit = torque_limit
-            self._set_message(f"ID {motor_id} moving to {position} ({position * 360 / 4095:.1f}°)", "success")
+            self._set_message(
+                f"ID {motor_id} moving to {position} ({position * 360 / 4095:.1f}°)", "success"
+            )
             return motor.as_dict(selected=motor_id == self._selected_id)
 
     def jog_position(
@@ -1040,8 +1059,12 @@ class BenchController:
                 if not -3073 <= value <= 3073:
                     raise ControlError("Closed-loop speed must be −3073 to 3073")
                 if not self.simulation:
-                    self._bus.write("Acceleration", name, acceleration, normalize=False, num_retry=1)
-                    self._bus.write("Torque_Limit", name, torque_limit, normalize=False, num_retry=1)
+                    self._bus.write(
+                        "Acceleration", name, acceleration, normalize=False, num_retry=1
+                    )
+                    self._bus.write(
+                        "Torque_Limit", name, torque_limit, normalize=False, num_retry=1
+                    )
                     self._bus.write("Goal_Velocity", name, value, normalize=False, num_retry=1)
                 message = f"ID {motor_id} closed-loop speed set to {value}"
             elif motor.operating_mode == 2:
@@ -1049,8 +1072,12 @@ class BenchController:
                     raise ControlError("Open-loop drive must be −1000 to 1000")
                 raw_drive = _encode_sign_magnitude(value, 10)
                 if not self.simulation:
-                    self._bus.write("Acceleration", name, acceleration, normalize=False, num_retry=1)
-                    self._bus.write("Torque_Limit", name, torque_limit, normalize=False, num_retry=1)
+                    self._bus.write(
+                        "Acceleration", name, acceleration, normalize=False, num_retry=1
+                    )
+                    self._bus.write(
+                        "Torque_Limit", name, torque_limit, normalize=False, num_retry=1
+                    )
                     self._bus.write("Goal_Time", name, raw_drive, normalize=False, num_retry=1)
                 message = f"ID {motor_id} open-loop drive set to {value}"
             else:
@@ -1058,9 +1085,13 @@ class BenchController:
                     raise ControlError("Relative step must be −4095 to 4095")
                 raw_step = _encode_sign_magnitude(value, 15)
                 if not self.simulation:
-                    self._bus.write("Acceleration", name, acceleration, normalize=False, num_retry=1)
+                    self._bus.write(
+                        "Acceleration", name, acceleration, normalize=False, num_retry=1
+                    )
                     self._bus.write("Goal_Velocity", name, velocity, normalize=False, num_retry=1)
-                    self._bus.write("Torque_Limit", name, torque_limit, normalize=False, num_retry=1)
+                    self._bus.write(
+                        "Torque_Limit", name, torque_limit, normalize=False, num_retry=1
+                    )
                     self._bus.write("Goal_Position", name, raw_step, normalize=False, num_retry=1)
                 motor.target_position = max(0, min(4095, motor.position + value))
                 message = f"ID {motor_id} relative step set to {value}"
@@ -1083,7 +1114,11 @@ class BenchController:
     ) -> dict[str, Any]:
         with self._lock:
             motor = self._require_motor(motor_id)
-            velocity, acceleration, torque_limit = int(velocity), int(acceleration), int(torque_limit)
+            velocity, acceleration, torque_limit = (
+                int(velocity),
+                int(acceleration),
+                int(torque_limit),
+            )
             if not 0 <= velocity <= 3073:
                 raise ControlError("Velocity must be 0–3073 raw units")
             if not 0 <= acceleration <= 254:
@@ -1137,8 +1172,7 @@ class BenchController:
             armed = [motor.id for motor in motors if motor.torque_enabled]
             if offline:
                 raise ControlError(
-                    "Bus EEPROM write blocked by offline ID(s): "
-                    + ", ".join(map(str, offline))
+                    "Bus EEPROM write blocked by offline ID(s): " + ", ".join(map(str, offline))
                 )
             if armed:
                 raise ControlError(
@@ -1149,8 +1183,7 @@ class BenchController:
             # Validate the shared values against every motor's current config
             # before the first device is unlocked or written.
             plans = [
-                (motor, self._validate_persistent_values_locked(motor, values))
-                for motor in motors
+                (motor, self._validate_persistent_values_locked(motor, values)) for motor in motors
             ]
 
             completed: list[int] = []
@@ -1171,9 +1204,7 @@ class BenchController:
                     ) from exc
 
             fields = ", ".join(clean.keys())
-            self._set_message(
-                f"Verified {fields} on all {len(motors)} motors", "success"
-            )
+            self._set_message(f"Verified {fields} on all {len(motors)} motors", "success")
             return self.snapshot()
 
     def _validate_persistent_values_locked(
@@ -1181,9 +1212,7 @@ class BenchController:
     ) -> dict[str, int]:
         unknown = set(values) - set(PERSISTENT_PARAMETERS)
         if unknown:
-            raise ControlError(
-                f"Unsupported persistent parameter(s): {', '.join(sorted(unknown))}"
-            )
+            raise ControlError(f"Unsupported persistent parameter(s): {', '.join(sorted(unknown))}")
         if not values:
             raise ControlError("No persistent settings were supplied")
 
@@ -1199,23 +1228,17 @@ class BenchController:
             clean[key] = value
 
         merged = {**motor.config, **clean}
-        if int(merged.get("min_position", 0)) >= int(
-            merged.get("max_position", 4095)
-        ):
+        if int(merged.get("min_position", 0)) >= int(merged.get("max_position", 4095)):
             raise ControlError(
                 f"Minimum position must be lower than maximum position on ID {motor.id}"
             )
-        if int(merged.get("min_voltage", 40)) >= int(
-            merged.get("max_voltage", 140)
-        ):
+        if int(merged.get("min_voltage", 40)) >= int(merged.get("max_voltage", 140)):
             raise ControlError(
                 f"Minimum voltage must be lower than maximum voltage on ID {motor.id}"
             )
         return clean
 
-    def _write_persistent_values_locked(
-        self, motor: MotorState, clean: dict[str, int]
-    ) -> None:
+    def _write_persistent_values_locked(self, motor: MotorState, clean: dict[str, int]) -> None:
         if not self.simulation:
             name = self._motor_name(motor.id)
             self._bus.write("Lock", name, 0, normalize=False, num_retry=2)
@@ -1223,9 +1246,7 @@ class BenchController:
                 for key, value in clean.items():
                     register = PERSISTENT_PARAMETERS[key][0]
                     self._bus.write(register, name, value, normalize=False, num_retry=2)
-                    actual = int(
-                        self._bus.read(register, name, normalize=False, num_retry=2)
-                    )
+                    actual = int(self._bus.read(register, name, normalize=False, num_retry=2))
                     if actual != value:
                         raise ControlError(
                             f"Verification failed for {key}: wrote {value}, read {actual}"
@@ -1259,7 +1280,9 @@ class BenchController:
     def delete_capture(self, capture_id: str) -> dict[str, Any]:
         with self._lock:
             before = len(self._captures)
-            self._captures = [item for item in self._captures if item.get("capture_id") != capture_id]
+            self._captures = [
+                item for item in self._captures if item.get("capture_id") != capture_id
+            ]
             if len(self._captures) == before:
                 raise ControlError("Captured position was not found")
             self._save_captures_locked()
@@ -1268,7 +1291,9 @@ class BenchController:
 
     def move_to_capture(self, motor_id: int, capture_id: str) -> dict[str, Any]:
         with self._lock:
-            capture = next((item for item in self._captures if item.get("capture_id") == capture_id), None)
+            capture = next(
+                (item for item in self._captures if item.get("capture_id") == capture_id), None
+            )
             if capture is None:
                 raise ControlError("Captured position was not found")
             motor = self._require_motor(motor_id)
@@ -1283,16 +1308,33 @@ class BenchController:
             if self._recording_file is not None:
                 raise ControlError("A recording is already active")
             self.recordings_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             path = self.recordings_dir / f"{timestamp}-{_safe_filename(label)}.csv"
             self._recording_file = path.open("w", newline="", encoding="utf-8")
             fields = [
-                "timestamp_utc", "elapsed_s", "motor_id", "model", "position_raw",
-                "position_deg", "target_raw", "velocity_raw", "velocity_rpm_estimate",
-                "load_raw", "load_percent", "voltage_v", "temperature_c", "current_raw",
-                "current_a", "torque_constant_kgcm_per_a", "estimated_torque_kgcm",
-                "estimated_torque_nm", "operating_mode", "mode_command", "moving",
-                "status", "torque_enabled",
+                "timestamp_utc",
+                "elapsed_s",
+                "motor_id",
+                "model",
+                "position_raw",
+                "position_deg",
+                "target_raw",
+                "velocity_raw",
+                "velocity_rpm_estimate",
+                "load_raw",
+                "load_percent",
+                "voltage_v",
+                "temperature_c",
+                "current_raw",
+                "current_a",
+                "torque_constant_kgcm_per_a",
+                "estimated_torque_kgcm",
+                "estimated_torque_nm",
+                "operating_mode",
+                "mode_command",
+                "moving",
+                "status",
+                "torque_enabled",
             ]
             self._recording_writer = csv.DictWriter(self._recording_file, fieldnames=fields)
             self._recording_writer.writeheader()
@@ -1351,6 +1393,7 @@ class BenchController:
                     motor.as_dict(selected=motor.id == self._selected_id)
                     for motor in self._motors.values()
                 ],
+                "ports": deepcopy(self._ports),
                 "captures": captures,
                 "recording": self._recording_state_locked(),
                 "message": self._message,
@@ -1364,10 +1407,22 @@ class BenchController:
             now = time.monotonic()
             dt = min(0.25, now - previous)
             previous = now
+
+            if now >= self._next_port_scan:
+                try:
+                    discovered = self._discover_ports()
+                except Exception:
+                    discovered = None
+                with self._lock:
+                    if discovered is not None:
+                        self._ports = discovered
+                    self._next_port_scan = now + self.port_scan_interval
+
+            chain_bus = None
             with self._lock:
                 if not self._connected:
                     continue
-                for motor in self._motors.values():
+                for motor in list(self._motors.values()):
                     try:
                         if self.simulation:
                             self._step_simulation_locked(motor, dt)
@@ -1382,6 +1437,110 @@ class BenchController:
                                 f"Telemetry read failed on ID {motor.id}: {self._compact_error(exc)}",
                                 "danger",
                             )
+                if not self.simulation and now >= self._next_chain_scan:
+                    self._next_chain_scan = now + self.chain_scan_interval
+                    chain_bus = self._bus
+
+            if chain_bus is not None:
+                try:
+                    found = chain_bus.broadcast_ping(num_retry=0, raise_on_error=False)
+                    if found is None:
+                        raise ConnectionError("broadcast discovery did not complete")
+                    with self._lock:
+                        if self._connected and self._bus is chain_bus:
+                            self._reconcile_chain_locked(found)
+                except Exception as exc:
+                    with self._lock:
+                        if not self._connected or self._bus is not chain_bus:
+                            continue
+                        self._set_message(
+                            f"Live chain discovery failed: {self._compact_error(exc)}",
+                            "warning",
+                        )
+
+    def _reconcile_chain_locked(self, found: dict[int, int]) -> None:
+        """Apply one read-only discovery result to the connected motor list."""
+        if self.simulation or self._bus is None:
+            return
+
+        discovered = {int(motor_id): int(model) for motor_id, model in found.items()}
+        supported = {
+            motor_id: model for motor_id, model in discovered.items() if model in SUPPORTED_MODELS
+        }
+        unsupported = {
+            motor_id: model
+            for motor_id, model in discovered.items()
+            if model not in SUPPORTED_MODELS
+        }
+
+        removed: list[int] = []
+        for motor_id, motor in list(self._motors.items()):
+            if supported.get(motor_id) == motor.model_number:
+                self._chain_misses.pop(motor_id, None)
+                continue
+            misses = self._chain_misses.get(motor_id, 0) + 1
+            self._chain_misses[motor_id] = misses
+            if misses < self.chain_absence_scans:
+                continue
+            removed.append(motor_id)
+            self._motors.pop(motor_id, None)
+            self._chain_misses.pop(motor_id, None)
+            self._bus.unregister_motor(self._motor_name(motor_id))
+
+        added: list[MotorState] = []
+        for motor_id, model_number in sorted(supported.items()):
+            if motor_id in self._motors:
+                continue
+            profile = SUPPORTED_MODELS[model_number]
+            self._bus.register_motor(
+                self._motor_name(motor_id),
+                Motor(motor_id, profile["sdk_model"], MotorNormMode.DEGREES),
+            )
+            motor = self._new_motor_state(motor_id, model_number)
+            self._motors[motor_id] = motor
+            try:
+                self._refresh_motor_locked(motor)
+                self._read_config_locked(motor)
+                motor.target_position = motor.position
+            except Exception:
+                motor.online = False
+                motor.communication_errors = 1
+            added.append(motor)
+
+        self._motors = dict(sorted(self._motors.items()))
+        if self._selected_id not in self._motors:
+            self._selected_id = next(iter(self._motors), None)
+
+        new_unsupported = {
+            motor_id: model
+            for motor_id, model in unsupported.items()
+            if self._known_unsupported.get(motor_id) != model
+        }
+        self._known_unsupported = unsupported
+
+        changes: list[str] = []
+        if added:
+            changes.append("added " + ", ".join(f"ID {motor.id} {motor.model}" for motor in added))
+        if removed:
+            changes.append("removed " + ", ".join(f"ID {motor_id}" for motor_id in removed))
+        if new_unsupported:
+            changes.append(
+                "ignored unsupported "
+                + ", ".join(
+                    f"ID {motor_id} model {model}"
+                    for motor_id, model in sorted(new_unsupported.items())
+                )
+            )
+        if changes:
+            armed = [motor.id for motor in added if motor.torque_enabled]
+            suffix = (
+                "; torque was already enabled on "
+                + ", ".join(f"ID {motor_id}" for motor_id in armed)
+                if armed
+                else ""
+            )
+            level = "warning" if armed or removed or new_unsupported else "success"
+            self._set_message("Live chain update: " + "; ".join(changes) + suffix, level)
 
     def _step_simulation_locked(self, motor: MotorState, dt: float) -> None:
         previous = motor.position
@@ -1409,7 +1568,9 @@ class BenchController:
             stall_current = motor.stall_current_a or 3.0
             simulated_amps = 0.03 + stall_current * motor.load_raw / 1000.0
             motor.current_raw = max(0, round(simulated_amps / CURRENT_SCALE_A_PER_LSB))
-            motor.temperature = min(68, max(24, motor.temperature + (1 if motor.load_raw > 700 else 0)))
+            motor.temperature = min(
+                68, max(24, motor.temperature + (1 if motor.load_raw > 700 else 0))
+            )
         else:
             motor.velocity_raw = 0
             motor.load_raw = 0
@@ -1433,9 +1594,11 @@ class BenchController:
             return
         if self._bus is None:
             raise ControlError("Hardware bus is not connected")
-        data, comm, error = self._bus.packet_handler.readTxRx(
-            self._bus.port_handler, motor.id, 56, 15
-        )
+        transaction = getattr(self._bus, "transaction_lock", nullcontext())
+        with transaction:
+            data, comm, error = self._bus.packet_handler.readTxRx(
+                self._bus.port_handler, motor.id, 56, 15
+            )
         if not self._bus._is_comm_success(comm):
             raise ConnectionError(self._bus.packet_handler.getTxRxResult(comm))
         if error:
@@ -1464,8 +1627,11 @@ class BenchController:
         name = self._motor_name(motor.id)
         for key, (register, _, _) in PERSISTENT_PARAMETERS.items():
             try:
-                motor.config[key] = int(self._bus.read(register, name, normalize=False, num_retry=1))
+                motor.config[key] = int(
+                    self._bus.read(register, name, normalize=False, num_retry=1)
+                )
             except Exception:
+                LOGGER.debug("Could not read %s from ID %s", register, motor.id, exc_info=True)
                 continue
         try:
             motor.operating_mode = int(
@@ -1484,7 +1650,7 @@ class BenchController:
                     continue
                 setattr(motor, attr, value)
             except Exception:
-                pass
+                LOGGER.debug("Could not read %s from ID %s", register, motor.id, exc_info=True)
         try:
             motor.torque_enabled = bool(
                 self._bus.read("Torque_Enable", name, normalize=False, num_retry=1)
@@ -1540,7 +1706,9 @@ class BenchController:
             "active": active,
             "name": self._recording_path.name if self._recording_path else None,
             "started_at": self._recording_started,
-            "download": f"/api/recordings/{self._recording_path.name}" if self._recording_path else None,
+            "download": f"/api/recordings/{self._recording_path.name}"
+            if self._recording_path
+            else None,
         }
 
     def _load_captures(self) -> list[dict[str, Any]]:
@@ -1619,11 +1787,4 @@ class BenchController:
 
     @staticmethod
     def _import_feetech():
-        try:
-            from lerobot.motors.feetech import FeetechMotorsBus
-            from lerobot.motors.motors_bus import Motor, MotorNormMode
-        except Exception as exc:
-            raise ControlError(
-                "LeRobot Feetech support is unavailable. Start with ./run.py so it can select the local lerobot environment."
-            ) from exc
         return FeetechMotorsBus, Motor, MotorNormMode
