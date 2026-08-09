@@ -1,4 +1,4 @@
-fastapi>=0.115,<1
+fastapi>=0.141.1,<1
 uvicorn>=0.32,<1
 websockets>=13,<17
 pyserial>=3.5,<4
