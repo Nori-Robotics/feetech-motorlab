@@ -5,9 +5,10 @@ Feetech STS3215, STS3250, and STS3095 servos. MotorLab provides multi-servo tele
 individual and bus-wide motion controls, live tuning, recording, encoder
 centering, EEPROM configuration, and a guarded motor-ID station.
 
-[Watch the 24-second release demo (MP4)](artifacts/motorlab-x-release.mp4),
-including live simulated telemetry, synchronized motion, and a guarded motor
-ID change from 1 to 7.
+https://github.com/user-attachments/assets/68108ecb-7325-4e22-be29-b89b35caf69c
+
+The 24-second release demo includes live simulated telemetry, synchronized
+motion, and a guarded motor ID change from 1 to 7.
 
 The application does not depend on a particular workstation, serial path, or
 USB bridge. It enumerates serial ports through pyserial on Linux, macOS, and
