@@ -5,8 +5,6 @@ Feetech STS3215, STS3250, and STS3095 servos. MotorLab provides multi-servo tele
 individual and bus-wide motion controls, live tuning, recording, encoder
 centering, EEPROM configuration, and a guarded motor-ID station.
 
-[![Watch the NORI MotorLab release demo](artifacts/motorlab-x-release-poster.png)](artifacts/motorlab-x-release.mp4)
-
 [Watch the 24-second release demo (MP4)](artifacts/motorlab-x-release.mp4),
 including live simulated telemetry, synchronized motion, and a guarded motor
 ID change from 1 to 7.
